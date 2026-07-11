@@ -33,6 +33,40 @@
     color:var(--dim);pointer-events:none;transition:opacity 1.2s}
   #err{position:fixed;inset:0;display:none;place-items:center;background:var(--bg);
     color:var(--ink);font-size:13px;line-height:2;text-align:center;padding:24px}
+
+  /* ---- material panel ---- */
+  #panel{position:fixed;left:18px;top:84px;width:236px;z-index:5;
+    background:rgba(7,9,13,.84);border:1px solid var(--line);border-radius:4px;
+    backdrop-filter:blur(6px);max-height:calc(100% - 118px);overflow-y:auto;
+    scrollbar-width:thin}
+  #phead{display:flex;align-items:center;justify-content:space-between;
+    padding:8px 12px;cursor:pointer;user-select:none}
+  #phead span{font-size:10px;letter-spacing:.22em;color:var(--acc)}
+  #phead b{font-size:11px;color:var(--dim);font-weight:400}
+  #panel.min #pbody{display:none}
+  #pbody{padding:0 12px 10px}
+  .dcard{border-top:1px solid var(--line);padding:8px 0 10px}
+  .dname{font-size:10px;letter-spacing:.14em;margin-bottom:7px;
+    display:flex;align-items:center;gap:7px;color:var(--ink)}
+  .chip{width:8px;height:8px;border-radius:2px;flex:none}
+  .modes{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:9px}
+  .modes button{font:inherit;font-size:9px;letter-spacing:.06em;padding:4px 0;
+    background:transparent;border:1px solid var(--line);color:var(--dim);
+    border-radius:2px;cursor:pointer}
+  .modes button.on{color:var(--acc);border-color:rgba(182,240,78,.55);
+    background:rgba(182,240,78,.08)}
+  .sliders{display:flex;gap:6px;min-height:128px;align-items:flex-end}
+  .sl{display:none;flex-direction:column;align-items:center;gap:3px;flex:1}
+  .sl.show{display:flex}
+  .sl input[type=range]{
+    -webkit-appearance:slider-vertical;
+    writing-mode:vertical-lr;direction:rtl;
+    width:20px;height:86px;accent-color:var(--acc);cursor:pointer;margin:0}
+  .sl .val{font-size:9px;color:var(--ink);letter-spacing:.04em}
+  .sl .lab{font-size:9px;color:var(--dim);letter-spacing:.06em;white-space:nowrap}
+  @media (max-width:640px){
+    #panel{left:10px;top:72px;width:212px}
+  }
 </style>
 </head>
 <body>
@@ -47,7 +81,11 @@
   <div><span id="res">--</span> · <span id="ms">--</span> ms/frame</div>
   <div class="badge">WASM32 + SIMD128 × 4-RAY PACKETS</div>
 </div>
-<div id="hint">drag: orbit &nbsp;·&nbsp; wheel / pinch: zoom</div>
+<div id="hint">drag: orbit &nbsp;·&nbsp; wheel / pinch: zoom &nbsp;·&nbsp; panel: surface materials</div>
+<div id="panel">
+  <div id="phead"><span>SURFACE // MAT</span><b id="pfold">−</b></div>
+  <div id="pbody"></div>
+</div>
 <div id="err"><div>このデモには WebAssembly SIMD128 が必要です。<br>
 Chrome 91+ / Firefox 89+ / Safari 16.4+ で開いてください。</div></div>
 
@@ -65,6 +103,96 @@ try {
   return;
 }
 const fbp = e.fb();
+
+// ---- per-dino material panel ----
+// e.mat(i, mode, refl, tran, ior, tex, gloss)  mode: 0 plain 1 texture 2 metal 3 acrylic
+const DINOS = [
+  { name:'THEROPOD',    color:'#4a8a3c' },
+  { name:'STEGOSAURUS', color:'#96551f' },
+  { name:'TRICERATOPS', color:'#70755f' },
+];
+const MODE_LABELS = ['ノーマル','テクスチャ','金属反射','アクリル'];
+const PARAMS = {
+  tex:  { label:'模様',   min:0,   max:1, step:0.01, def:1.00 },
+  refl: { label:'反射率', min:0,   max:1, step:0.01, def:0.50 },
+  gloss:{ label:'光沢',   min:0,   max:1, step:0.01, def:0.50 },
+  tran: { label:'透過率', min:0,   max:1, step:0.01, def:0.65 },
+  ior:  { label:'屈折率', min:1.0, max:2.0, step:0.01, def:1.49 },
+};
+const MODE_PARAMS = [               // sliders shown per mode
+  ['refl','gloss'],                 // ノーマル
+  ['tex','refl','gloss'],           // テクスチャ
+  ['refl','gloss'],                 // 金属反射
+  ['tran','ior','refl'],            // アクリル
+];
+const mstate = DINOS.map(() => {
+  const s = { mode:1 };
+  for (const k in PARAMS) s[k] = PARAMS[k].def;
+  return s;
+});
+function pushMat(i){
+  const s = mstate[i];
+  const tex = s.mode === 1 ? s.tex : 0;   // pattern only in texture mode
+  e.mat(i, s.mode, s.refl, s.tran, s.ior, tex, s.gloss);
+}
+const cards = [];
+const $pb = document.getElementById('pbody');
+DINOS.forEach((d, i) => {
+  const card = document.createElement('div'); card.className = 'dcard';
+  const nm = document.createElement('div'); nm.className = 'dname';
+  const ch = document.createElement('span'); ch.className = 'chip';
+  ch.style.background = d.color;
+  nm.append(ch, d.name);
+  const modes = document.createElement('div'); modes.className = 'modes';
+  MODE_LABELS.forEach((label, mv) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = label;
+    b.onclick = () => {
+      mstate[i].mode = mv;
+      [...modes.children].forEach((x, j) => x.classList.toggle('on', j === mv));
+      showSliders(i); pushMat(i);
+    };
+    modes.appendChild(b);
+  });
+  const sliders = document.createElement('div'); sliders.className = 'sliders';
+  for (const key in PARAMS){
+    const p = PARAMS[key];
+    const w = document.createElement('div'); w.className = 'sl'; w.dataset.k = key;
+    const r = document.createElement('input');
+    r.type = 'range'; r.min = p.min; r.max = p.max; r.step = p.step; r.value = p.def;
+    r.setAttribute('orient', 'vertical');           // firefox
+    const val = document.createElement('div'); val.className = 'val';
+    val.textContent = p.def.toFixed(2);
+    const lab = document.createElement('div'); lab.className = 'lab';
+    lab.textContent = p.label;
+    r.addEventListener('input', () => {
+      mstate[i][key] = +r.value;
+      val.textContent = (+r.value).toFixed(2);
+      pushMat(i);
+    });
+    w.append(r, val, lab);
+    sliders.appendChild(w);
+  }
+  card.append(nm, modes, sliders);
+  $pb.appendChild(card);
+  cards.push({ modes, sliders });
+});
+function showSliders(i){
+  const show = MODE_PARAMS[mstate[i].mode];
+  for (const w of cards[i].sliders.children)
+    w.classList.toggle('show', show.includes(w.dataset.k));
+}
+DINOS.forEach((_, i) => {
+  cards[i].modes.children[mstate[i].mode].classList.add('on');
+  showSliders(i); pushMat(i);
+});
+const $panel = document.getElementById('panel');
+const $fold = document.getElementById('pfold');
+document.getElementById('phead').onclick = () => {
+  $panel.classList.toggle('min');
+  $fold.textContent = $panel.classList.contains('min') ? '+' : '−';
+};
+if (innerWidth < 640) { $panel.classList.add('min'); $fold.textContent = '+'; }
 
 // ---- adaptive resolution ----
 const LV = [[320,180],[480,270],[640,360],[800,450],[960,540]];
