@@ -14,15 +14,22 @@ WebAssembly SIMD128 だけでリアルタイムにレイマーチングします
 
 ## Quaternius 恐竜モデル(三角形メッシュ経路)
 
-左パネルの **MODEL** から、[Quaternius Animated Dinosaur Pack](https://quaternius.com/packs/animateddinosaurs.html)
+左パネルの **MODEL** で [Quaternius Animated Dinosaur Pack](https://quaternius.com/packs/animateddinosaurs.html)
 の6体(T-Rex / Velociraptor / Triceratops / Stegosaurus / Parasaurolophus /
-Apatosaurus)を選ぶと、その glTF メッシュを**三角形レイトレ**で描画します。
-**ACTION** から Idle / Walk / Run / Attack / Jump / Death を**リアルタイム**で切替可能。
+Apatosaurus)を選ぶと、**6体を横一列に並べて三角形レイトレ**で描画します。
+MODEL ボタンは**カメラの中心をその恐竜へ切り替え**る役割で、中心にした恐竜に対して:
 
-- SDF 経路とは別の第2レンダラ(`mesh.c`)。同じチェッカー床・空・反射・フォグで描くので見た目が揃う
+- **ACTION** — Idle / Walk / Run / Attack / Jump / Death を**リアルタイム**切替
+- **マテリアル** — SDF 版と同じ4モード(ノーマル / テクスチャ / 金属反射 / アクリル)を
+  スライダ(反射率 / 光沢 / 透過率 / 屈折率 / 模様)で調整。個体ごとに保持される
+
+**SDF HERD** ボタンで元の SDF 群れに戻ります。
+
+- SDF 経路とは別の第2レンダラ(`mesh.c`)。同じチェッカー床・空・反射・フォグ・マテリアルで描くので見た目が揃う
 - GLB は実行時に `models/*.glb` を fetch。JS(`glb.js`)が glTF スキンアニメをサンプリングして毎フレーム
-  ボーン行列を wasm に渡し、wasm 側で LBS スキニング → BVH 再構築 → スカラーレイトレ
-- ローポリ(最大2282三角形)なので CPU でも実用速度。法線はスキン後の面法線でフラットシェード
+  ボーン行列を wasm に渡し、wasm 側で全6体を LBS スキニング → 1つの BVH に再構築 → スカラーレイトレ
+  (プライマリ + 太陽シャドウ + 床ミラー + アクリル透過)
+- ローポリ(6体計 約9500三角形)なので CPU でも実用速度。法線はスキン後の面法線でフラットシェード
 - モデルの色は glTF の `baseColorFactor`(画像テクスチャ・UV なし)
 
 Quaternius モデルは MIT/CC0 相当で個人・商用利用可。`models/` に同梱しています。
