@@ -227,7 +227,55 @@
     return out;
   }
 
-  const API = { parseGLB, buildModel, sampleBones };
+  // Forward ground speed (world units / sec) for a locomotion clip, derived so
+  // the planted foot does not slide: skin the mesh across one cycle, track how
+  // fast the low (ground-contact) verts sweep backward (+Z, since the models
+  // face -Z), and divide the summed backward travel by the clip duration.
+  function gaitSpeed(model, ai) {
+    const anim = model.anims[ai];
+    if (!anim) return 0;
+    const dur = anim.duration || 1, N = 24;
+    const frames = [];
+    let minY = 1e30;
+    for (let f = 0; f < N; f++) {
+      const vs = skinAll(model, ai, dur * f / N);
+      frames.push(vs);
+      for (let v = 0; v < model.nverts; v++) if (vs[v*3+1] < minY) minY = vs[v*3+1];
+    }
+    const thr = minY + 0.12;                 // "on the ground" band
+    let back = 0, prevZ = null;
+    for (let f = 0; f <= N; f++) {
+      const vs = frames[f % N];
+      let zs = 0, cnt = 0;
+      for (let v = 0; v < model.nverts; v++)
+        if (vs[v*3+1] < thr) { zs += vs[v*3+2]; cnt++; }
+      const z = cnt ? zs / cnt : prevZ;
+      if (prevZ !== null) { const dz = z - prevZ; if (dz > 0) back += dz; }
+      prevZ = z;
+    }
+    return back / dur;
+  }
+
+  // skin every vertex of a model at (ai,t) into a fresh Float32Array(nverts*3)
+  function skinAll(model, ai, t) {
+    const bones = sampleBones(model, ai, t);
+    const out = new Float32Array(model.nverts * 3);
+    for (let v = 0; v < model.nverts; v++) {
+      const p0 = model.pos[v*3], p1 = model.pos[v*3+1], p2 = model.pos[v*3+2];
+      let o0 = 0, o1 = 0, o2 = 0;
+      for (let k = 0; k < 4; k++) {
+        const w = model.wgt[v*4+k]; if (!w) continue;
+        const B = bones.subarray(model.jnt[v*4+k]*12, model.jnt[v*4+k]*12+12);
+        o0 += w*(B[0]*p0+B[1]*p1+B[2]*p2+B[3]);
+        o1 += w*(B[4]*p0+B[5]*p1+B[6]*p2+B[7]);
+        o2 += w*(B[8]*p0+B[9]*p1+B[10]*p2+B[11]);
+      }
+      out[v*3] = o0; out[v*3+1] = o1; out[v*3+2] = o2;
+    }
+    return out;
+  }
+
+  const API = { parseGLB, buildModel, sampleBones, gaitSpeed };
   if (typeof module!=='undefined' && module.exports) module.exports = API;
   else root.GLB = API;
 })(typeof window!=='undefined' ? window : globalThis);
