@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>DINO // RT — wasm SIMD128 ray-marched dinosaur</title>
+<style>
+  :root{
+    --bg:#07090d; --ink:#cfd6cf; --dim:#5a6358; --acc:#b6f04e; --line:#1a2017;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden;background:var(--bg)}
+  body{
+    font-family:ui-monospace,'Cascadia Mono','Source Code Pro',Menlo,Consolas,monospace;
+    color:var(--ink);
+  }
+  #stage{position:fixed;inset:0;width:100%;height:100%;cursor:grab;touch-action:none;display:block;
+    image-rendering:pixelated;image-rendering:crisp-edges}
+  #stage.drag{cursor:grabbing}
+  .vig{position:fixed;inset:0;pointer-events:none;
+    background:radial-gradient(120% 90% at 50% 42%,transparent 55%,rgba(0,0,0,.42) 100%)}
+  header{position:fixed;top:18px;left:22px;pointer-events:none;mix-blend-mode:screen}
+  h1{font-size:15px;font-weight:600;letter-spacing:.22em;color:var(--ink)}
+  h1 b{color:var(--acc);font-weight:600}
+  .sub{margin-top:5px;font-size:10px;letter-spacing:.14em;color:var(--dim)}
+  #hud{position:fixed;right:20px;bottom:16px;text-align:right;font-size:11px;
+    line-height:1.75;letter-spacing:.06em;color:var(--dim);pointer-events:none}
+  #hud .fps{font-size:22px;color:var(--ink);letter-spacing:.04em}
+  #hud .fps i{font-style:normal;color:var(--acc)}
+  .badge{display:inline-block;margin-top:6px;padding:2px 8px;border:1px solid var(--line);
+    border-radius:2px;font-size:9px;letter-spacing:.18em;color:var(--acc);background:rgba(182,240,78,.05)}
+  #hint{position:fixed;left:22px;bottom:18px;font-size:10px;letter-spacing:.12em;
+    color:var(--dim);pointer-events:none;transition:opacity 1.2s}
+  #err{position:fixed;inset:0;display:none;place-items:center;background:var(--bg);
+    color:var(--ink);font-size:13px;line-height:2;text-align:center;padding:24px}
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div class="vig"></div>
+<header>
+  <h1>DINO <b>//</b> RT</h1>
+  <div class="sub">3 SPECIES · RAY-MARCHED SDF · REFLECTIONS · NO GPU</div>
+</header>
+<div id="hud">
+  <div class="fps"><i id="fps">--</i> fps</div>
+  <div><span id="res">--</span> · <span id="ms">--</span> ms/frame</div>
+  <div class="badge">WASM32 + SIMD128 × 4-RAY PACKETS</div>
+</div>
+<div id="hint">drag: orbit &nbsp;·&nbsp; wheel / pinch: zoom</div>
+<div id="err"><div>このデモには WebAssembly SIMD128 が必要です。<br>
+Chrome 91+ / Firefox 89+ / Safari 16.4+ で開いてください。</div></div>
+
+<script>
+(async () => {
+const B64 = "__WASM_B64__";
+
+// ---- instantiate (SIMD required) ----
+const bin = Uint8Array.from(atob(B64), c => c.charCodeAt(0));
+let e;
+try {
+  ({ instance: { exports: e } } = await WebAssembly.instantiate(bin));
+} catch (_) {
+  document.getElementById('err').style.display = 'grid';
+  return;
+}
+const fbp = e.fb();
+
+// ---- adaptive resolution ----
+const LV = [[320,180],[480,270],[640,360],[800,450],[960,540]];
+let lvl = 1, ema = 10, lastSwitch = 0;
+const imgs = LV.map(([w,h]) =>
+  new ImageData(new Uint8ClampedArray(e.memory.buffer, fbp, w*h*4), w, h));
+const off = document.createElement('canvas');
+const octx = off.getContext('2d');
+
+// ---- display canvas ----
+const cv = document.getElementById('stage');
+const ctx = cv.getContext('2d');
+function fit(){
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  cv.width  = Math.round(innerWidth  * dpr);
+  cv.height = Math.round(innerHeight * dpr);
+}
+addEventListener('resize', fit); fit();
+
+// ---- camera / input ----
+let az = 0.95, el = 0.27, dist = 5.6;
+let lastTouch = -4000, dragging = false, px = 0, py = 0, pinch0 = 0, dist0 = 0;
+const touched = () => { lastTouch = performance.now();
+  document.getElementById('hint').style.opacity = 0; };
+
+cv.addEventListener('pointerdown', ev => {
+  dragging = true; px = ev.clientX; py = ev.clientY;
+  cv.classList.add('drag'); cv.setPointerCapture(ev.pointerId); touched();
+});
+addEventListener('pointerup', () => { dragging = false; cv.classList.remove('drag'); });
+cv.addEventListener('pointermove', ev => {
+  if (!dragging) return;
+  az -= (ev.clientX - px) * 0.005;
+  el  = Math.min(1.25, Math.max(0.03, el + (ev.clientY - py) * 0.004));
+  px = ev.clientX; py = ev.clientY; touched();
+});
+cv.addEventListener('wheel', ev => {
+  ev.preventDefault();
+  dist = Math.min(12, Math.max(2.8, dist * Math.exp(ev.deltaY * 0.001))); touched();
+}, { passive:false });
+cv.addEventListener('touchstart', ev => {
+  if (ev.touches.length === 2) {
+    pinch0 = Math.hypot(ev.touches[0].clientX - ev.touches[1].clientX,
+                        ev.touches[0].clientY - ev.touches[1].clientY);
+    dist0 = dist;
+  }
+}, { passive:true });
+cv.addEventListener('touchmove', ev => {
+  if (ev.touches.length === 2 && pinch0 > 0) {
+    const d = Math.hypot(ev.touches[0].clientX - ev.touches[1].clientX,
+                         ev.touches[0].clientY - ev.touches[1].clientY);
+    dist = Math.min(12, Math.max(2.8, dist0 * pinch0 / d)); touched();
+  }
+}, { passive:true });
+
+// ---- HUD ----
+const $fps = document.getElementById('fps'),
+      $res = document.getElementById('res'),
+      $ms  = document.getElementById('ms');
+let hudAt = 0, frames = 0, fpsT0 = performance.now();
+
+// ---- main loop ----
+let t = 0, prev = performance.now();
+function frame(now){
+  const dt = Math.min((now - prev) / 1000, 0.05); prev = now;
+  t += dt;
+  if (now - lastTouch > 4000) az += dt * 0.10;   // auto orbit when idle
+
+  const [w, h] = LV[lvl];
+  const t0 = performance.now();
+  e.render(t, az, el, dist, w, h);
+  const rms = performance.now() - t0;
+  ema = ema * 0.85 + rms * 0.15;
+
+  if (now - lastSwitch > 800) {
+    if (ema > 15 && lvl > 0)            { lvl--; lastSwitch = now; }
+    else if (ema < 7.5 && lvl < LV.length - 1) { lvl++; lastSwitch = now; }
+  }
+
+  if (off.width !== w) { off.width = w; off.height = h; }
+  octx.putImageData(imgs[lvl], 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  // cover-fit
+  const s = Math.max(cv.width / w, cv.height / h);
+  const dw = w * s, dh = h * s;
+  ctx.drawImage(off, (cv.width - dw) / 2, (cv.height - dh) / 2, dw, dh);
+
+  frames++;
+  if (now - hudAt > 500) {
+    $fps.textContent = Math.round(frames * 1000 / (now - fpsT0));
+    frames = 0; fpsT0 = now; hudAt = now;
+    $res.textContent = w + '×' + h;
+    $ms.textContent = ema.toFixed(1);
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
