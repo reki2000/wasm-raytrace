@@ -38,6 +38,8 @@ jobs:
           mkdir -p _site
           cp dino-herd.html _site/index.html
           cp dino-herd.html _site/dino-herd.html
+          cp glb.js _site/glb.js
+          cp -r models _site/models
 
       - name: Setup Pages
         uses: actions/configure-pages@v5

@@ -67,6 +67,25 @@
   @media (max-width:640px){
     #panel{left:10px;top:72px;width:212px}
   }
+
+  /* ---- scene / model / action ---- */
+  #scenehead{padding:2px 0 9px}
+  .slabel{font-size:9px;letter-spacing:.18em;color:var(--dim);margin:7px 0 5px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px}
+  .pick{font:inherit;font-size:9px;letter-spacing:.05em;padding:5px 2px;
+    background:transparent;border:1px solid var(--line);color:var(--dim);
+    border-radius:2px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pick.on{color:var(--acc);border-color:rgba(182,240,78,.55);background:rgba(182,240,78,.08)}
+  .pick:disabled{opacity:.4;cursor:default}
+  #actionwrap{border-top:1px solid var(--line);padding-top:8px;margin-top:2px}
+
+  /* ---- model credit / license (always visible) ---- */
+  #credit{position:fixed;right:18px;top:15px;z-index:6;text-align:right;
+    font-size:9px;letter-spacing:.08em;line-height:1.5;color:var(--dim);
+    pointer-events:none;max-width:52vw}
+  #credit a{color:var(--dim);text-decoration:underline;pointer-events:auto}
+  @media (max-width:640px){ #credit{font-size:8px;top:auto;bottom:40px} }
 </style>
 </head>
 <body>
@@ -82,13 +101,26 @@
   <div class="badge">WASM32 + SIMD128 × 4-RAY PACKETS</div>
 </div>
 <div id="hint">drag: orbit &nbsp;·&nbsp; wheel / pinch: zoom &nbsp;·&nbsp; panel: surface materials</div>
+<div id="credit">恐竜モデル: <a href="https://quaternius.com/packs/animateddinosaurs.html" target="_blank" rel="noopener">Quaternius</a> — Animated Dinosaur Pack · CC0 1.0</div>
 <div id="panel">
-  <div id="phead"><span>SURFACE // MAT</span><b id="pfold">−</b></div>
-  <div id="pbody"></div>
+  <div id="phead"><span>SCENE // DINO</span><b id="pfold">−</b></div>
+  <div id="pbody">
+    <div id="scenehead">
+      <div class="slabel">MODEL</div>
+      <div class="grid2" id="scenesel"></div>
+      <div id="actionwrap" style="display:none">
+        <div class="slabel">ACTION</div>
+        <div class="grid3" id="actionsel"></div>
+      </div>
+    </div>
+    <div id="matwrap"></div>
+    <div id="meshwrap"></div>
+  </div>
 </div>
 <div id="err"><div>このデモには WebAssembly SIMD128 が必要です。<br>
 Chrome 91+ / Firefox 89+ / Safari 16.4+ で開いてください。</div></div>
 
+<script src="glb.js"></script>
 <script>
 (async () => {
 const B64 = "__WASM_B64__";
@@ -136,7 +168,7 @@ function pushMat(i){
   e.mat(i, s.mode, s.refl, s.tran, s.ior, tex, s.gloss);
 }
 const cards = [];
-const $pb = document.getElementById('pbody');
+const $pb = document.getElementById('matwrap');
 DINOS.forEach((d, i) => {
   const card = document.createElement('div'); card.className = 'dcard';
   const nm = document.createElement('div'); nm.className = 'dname';
@@ -194,6 +226,169 @@ document.getElementById('phead').onclick = () => {
 };
 if (innerWidth < 640) { $panel.classList.add('min'); $fold.textContent = '+'; }
 
+// ---- scene: SDF herd vs Quaternius glTF line-up ----
+const MESH_MODELS = ['T-Rex','Velociraptor','Triceratops','Stegosaurus','Parasaurolophus','Apatosaurus'];
+const MESH_COLORS = ['#6f8a44','#8a6a45','#585a68','#7c5a33','#7f8a55','#4d6a55'];
+const ACTIONS = ['Idle','Walk','Run','Attack','Jump','Death'];
+const SPACING = 3.4;      // spacing of the line-up along X
+
+let sceneMode = 'sdf';    // 'sdf' | 'mesh'
+let focusIndex = 0;       // which model the camera centers on (and controls)
+let focusXCur = 0;        // lerped camera target x
+let built = null;         // array of GLB.buildModel results (packed)
+let boneAll = null;       // Float32Array over e.meshBone()
+let meshLoaded = false, loadPromise = null;
+
+const meshState = MESH_MODELS.map(() => ({ mode:0, tex:1, refl:0.5, gloss:0.5, tran:0.65, ior:1.49 }));
+const meshAction = MESH_MODELS.map(() => 0);   // per-model anim index (set to Idle on load)
+
+const $scenesel = document.getElementById('scenesel');
+const $actionwrap = document.getElementById('actionwrap');
+const $actionsel = document.getElementById('actionsel');
+const $matwrap = document.getElementById('matwrap');
+const $meshwrap = document.getElementById('meshwrap');
+
+function mkPick(parent, label){
+  const b = document.createElement('button');
+  b.type='button'; b.className='pick'; b.textContent=label;
+  parent.appendChild(b); return b;
+}
+const sceneBtns = [];
+const sdfBtn = mkPick($scenesel, 'SDF HERD');
+sdfBtn.onclick = () => selectSdf();
+sceneBtns.push({el:sdfBtn, key:'sdf'});
+MESH_MODELS.forEach((name,i) => {
+  const b = mkPick($scenesel, name.toUpperCase());
+  b.onclick = () => enterMesh(i);
+  sceneBtns.push({el:b, key:name});
+});
+const actionBtns = [];
+ACTIONS.forEach(a => {
+  const b = mkPick($actionsel, a.toUpperCase());
+  b.onclick = () => selectAction(a);
+  actionBtns.push({el:b, name:a});
+});
+actionBtns[0].el.classList.add('on');
+
+function highlightScene(key){ sceneBtns.forEach(s => s.el.classList.toggle('on', s.key===key)); }
+function actionNameOf(model, ai){
+  const p = (model.animNames[ai]||'').split('|').pop().split('_'); return p[p.length-1];
+}
+function highlightAction(){
+  const cur = (meshLoaded && built) ? actionNameOf(built[focusIndex], meshAction[focusIndex]) : null;
+  actionBtns.forEach(b => b.el.classList.toggle('on', b.name===cur));
+}
+function animIndexFor(model, action){
+  const re = new RegExp('_'+action+'$','i');
+  let i = model.anims.findIndex(a => re.test(a.name));
+  if (i<0) i = model.anims.findIndex(a => new RegExp(action,'i').test(a.name));
+  return i<0 ? 0 : i;
+}
+
+// ---- mesh material card (mirrors the SDF card, follows the focused dino) ----
+let meshCard = null;
+function buildMeshCard(){
+  const card = document.createElement('div'); card.className='dcard';
+  const nm = document.createElement('div'); nm.className='dname';
+  const ch = document.createElement('span'); ch.className='chip';
+  const title = document.createElement('span'); nm.append(ch, title);
+  const modes = document.createElement('div'); modes.className='modes';
+  const modeBtns = [];
+  MODE_LABELS.forEach((label,mv)=>{
+    const b=document.createElement('button'); b.type='button'; b.textContent=label;
+    b.onclick=()=>{ meshState[focusIndex].mode=mv; refreshMeshCard(); pushMeshMat(focusIndex); };
+    modes.appendChild(b); modeBtns.push(b);
+  });
+  const sliders = document.createElement('div'); sliders.className='sliders';
+  const slEls = {};
+  for (const key in PARAMS){
+    const p=PARAMS[key];
+    const w=document.createElement('div'); w.className='sl'; w.dataset.k=key;
+    const r=document.createElement('input'); r.type='range'; r.min=p.min; r.max=p.max; r.step=p.step;
+    r.value=p.def; r.setAttribute('orient','vertical');
+    const val=document.createElement('div'); val.className='val'; val.textContent=p.def.toFixed(2);
+    const lab=document.createElement('div'); lab.className='lab'; lab.textContent=p.label;
+    r.addEventListener('input',()=>{ meshState[focusIndex][key]=+r.value; val.textContent=(+r.value).toFixed(2); pushMeshMat(focusIndex); });
+    w.append(r,val,lab); sliders.appendChild(w); slEls[key]={r,val,w};
+  }
+  card.append(nm,modes,sliders); $meshwrap.appendChild(card);
+  meshCard = {title,chip:ch,modeBtns,slEls};
+}
+function refreshMeshCard(){
+  if(!meshCard) return;
+  const s=meshState[focusIndex];
+  meshCard.title.textContent=MESH_MODELS[focusIndex].toUpperCase();
+  meshCard.chip.style.background=MESH_COLORS[focusIndex];
+  meshCard.modeBtns.forEach((b,j)=>b.classList.toggle('on', j===s.mode));
+  const show=MODE_PARAMS[s.mode];
+  for(const key in meshCard.slEls){
+    const el=meshCard.slEls[key];
+    el.r.value=s[key]; el.val.textContent=(+s[key]).toFixed(2);
+    el.w.classList.toggle('show', show.includes(key));
+  }
+}
+function pushMeshMat(i){
+  const s=meshState[i]; const tex = s.mode===1 ? s.tex : 0;
+  e.meshMat(i, s.mode, s.refl, s.tran, s.ior, tex, s.gloss);
+}
+buildMeshCard();
+
+// ---- load + pack all 6 models side by side ----
+async function loadAll(){
+  const models = await Promise.all(MESH_MODELS.map(async name => {
+    const buf = await (await fetch('models/'+name+'.glb')).arrayBuffer();
+    return GLB.buildModel(GLB.parseGLB(buf));
+  }));
+  let vb=0, tb=0, jb=0;
+  const pos=[], jnt=[], wgt=[], idx=[], col=[], tmdl=[];
+  models.forEach((m,i)=>{
+    m.mi=i; m.vbase=vb; m.jbase=jb; m.slotX=(i-(MESH_MODELS.length-1)/2)*SPACING;
+    m.fit[12]+=m.slotX;                          // shift into its slot
+    for (let v=0;v<m.nverts;v++){
+      pos.push(m.pos[v*3],m.pos[v*3+1],m.pos[v*3+2]);
+      jnt.push(m.jnt[v*4]+jb,m.jnt[v*4+1]+jb,m.jnt[v*4+2]+jb,m.jnt[v*4+3]+jb);
+      wgt.push(m.wgt[v*4],m.wgt[v*4+1],m.wgt[v*4+2],m.wgt[v*4+3]);
+    }
+    for (let t=0;t<m.ntris;t++){
+      idx.push(m.idx[t*3]+vb,m.idx[t*3+1]+vb,m.idx[t*3+2]+vb);
+      col.push(m.col[t*3],m.col[t*3+1],m.col[t*3+2]); tmdl.push(i);
+    }
+    vb+=m.nverts; tb+=m.ntris; jb+=m.nj;
+    meshAction[i]=animIndexFor(m,'Idle');
+  });
+  new Float32Array(e.memory.buffer, e.meshPos(),      pos.length).set(pos);
+  new Int32Array  (e.memory.buffer, e.meshJoint(),    jnt.length).set(jnt);
+  new Float32Array(e.memory.buffer, e.meshWeight(),   wgt.length).set(wgt);
+  new Int32Array  (e.memory.buffer, e.meshIndex(),    idx.length).set(idx);
+  new Float32Array(e.memory.buffer, e.meshColor(),    col.length).set(col);
+  new Int32Array  (e.memory.buffer, e.meshTriModel(), tmdl.length).set(tmdl);
+  e.meshSetCounts(vb, tb, jb);
+  boneAll = new Float32Array(e.memory.buffer, e.meshBone(), jb*12);
+  built = models;
+  built.forEach((_,i)=>pushMeshMat(i));
+  meshLoaded = true;
+}
+function ensureLoaded(){ return loadPromise || (loadPromise = loadAll()); }
+
+function selectSdf(){
+  sceneMode='sdf'; highlightScene('sdf');
+  $actionwrap.style.display='none'; $meshwrap.style.display='none'; $matwrap.style.display='';
+}
+async function enterMesh(i){
+  focusIndex=i; highlightScene(MESH_MODELS[i]);
+  $matwrap.style.display='none'; $meshwrap.style.display=''; $actionwrap.style.display='';
+  refreshMeshCard();
+  try { await ensureLoaded(); } catch(err){ console.error('model load failed:', err); return; }
+  if (!sceneBtns[i+1].el.classList.contains('on')) return;   // focus changed while loading
+  if (sceneMode!=='mesh'){ focusXCur = built[focusIndex].slotX; }
+  sceneMode='mesh'; highlightAction(); refreshMeshCard();
+}
+function selectAction(a){
+  if (!meshLoaded || !built){ actionBtns.forEach(b=>b.el.classList.toggle('on', b.name===a)); return; }
+  meshAction[focusIndex]=animIndexFor(built[focusIndex], a); highlightAction();
+}
+highlightScene('sdf');
+
 // ---- adaptive resolution ----
 const LV = [[320,180],[480,270],[640,360],[800,450],[960,540]];
 let lvl = 1, ema = 10, lastSwitch = 0;
@@ -231,7 +426,7 @@ cv.addEventListener('pointermove', ev => {
 });
 cv.addEventListener('wheel', ev => {
   ev.preventDefault();
-  dist = Math.min(12, Math.max(2.8, dist * Math.exp(ev.deltaY * 0.001))); touched();
+  dist = Math.min(22, Math.max(2.8, dist * Math.exp(ev.deltaY * 0.001))); touched();
 }, { passive:false });
 cv.addEventListener('touchstart', ev => {
   if (ev.touches.length === 2) {
@@ -244,7 +439,7 @@ cv.addEventListener('touchmove', ev => {
   if (ev.touches.length === 2 && pinch0 > 0) {
     const d = Math.hypot(ev.touches[0].clientX - ev.touches[1].clientX,
                          ev.touches[0].clientY - ev.touches[1].clientY);
-    dist = Math.min(12, Math.max(2.8, dist0 * pinch0 / d)); touched();
+    dist = Math.min(22, Math.max(2.8, dist0 * pinch0 / d)); touched();
   }
 }, { passive:true });
 
@@ -263,7 +458,14 @@ function frame(now){
 
   const [w, h] = LV[lvl];
   const t0 = performance.now();
-  e.render(t, az, el, dist, w, h);
+  if (sceneMode === 'mesh' && meshLoaded && built) {
+    focusXCur += (built[focusIndex].slotX - focusXCur) * Math.min(1, dt*6);
+    e.meshSetFocus(focusXCur, 0);
+    for (const m of built) boneAll.set(GLB.sampleBones(m, meshAction[m.mi], t), m.jbase*12);
+    e.renderMesh(az, el, dist, w, h);
+  } else {
+    e.render(t, az, el, dist, w, h);
+  }
   const rms = performance.now() - t0;
   ema = ema * 0.85 + rms * 0.15;
 
