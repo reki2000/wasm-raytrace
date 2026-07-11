@@ -476,16 +476,29 @@ static inline C3 groundAlbedo(V3 P){
     return c;
 }
 
-// per-lane dino id from hit position
-static inline void dinoMasks(V3 P, v4 hit, v4 *m0, v4 *m1, v4 *m2){
-    v4 d2[ND];
-    for (int i=0;i<ND;i++){
-        v4 dx=vsub(P.x,S(DB[i][0])), dy=vsub(P.y,S(DB[i][1])), dz=vsub(P.z,S(DB[i][2]));
-        d2[i] = vadd(vadd(vmul(dx,dx),vmul(dy,dy)),vmul(dz,dz));
+// per-lane dino id from hit position: nearest per-species SDF over the active
+// prim list (the hit surface's prim is always in the list, at distance ~0)
+static inline void dinoMasks(V3 P, v4 hit, const unsigned char *L, int n,
+                             v4 *m0, v4 *m1, v4 *m2){
+    v4 dd[ND];
+    for (int i=0;i<ND;i++) dd[i] = eyePair(P, i);
+    for (int k=0;k<n;k++){
+        int idx = L[k];
+        int di = idx >= DPR[2][0] ? 2 : (idx >= DPR[1][0] ? 1 : 0);
+        const float *q = PR[idx];
+        v4 cx = vsub(P.x,S(q[9])), cy = vsub(P.y,S(q[10])), cz = vsub(P.z,S(q[11]));
+        v4 c2 = vadd(vadd(vmul(cx,cx),vmul(cy,cy)),vmul(cz,cz));
+        v4 rh = vadd(dd[di], S(q[12]));
+        if (!any(vlt(c2, vmul(rh,rh)))) continue;
+        v4 pax=vsub(P.x,S(q[0])), pay=vsub(P.y,S(q[1])), paz=vsub(P.z,S(q[2]));
+        v4 h = clamp01(vmul(vadd(vadd(vmul(pax,S(q[3])),vmul(pay,S(q[4]))),vmul(paz,S(q[5]))), S(q[6])));
+        v4 qx=vsub(pax,vmul(S(q[3]),h)), qy=vsub(pay,vmul(S(q[4]),h)), qz=vsub(paz,vmul(S(q[5]),h));
+        v4 t = vadd(vadd(vmul(vmul(qx,qx),S(q[13])), vmul(vmul(qy,qy),S(q[14]))), vmul(vmul(qz,qz),S(q[15])));
+        dd[di] = vmin(dd[di], vsub(vsqrt(t), vadd(S(q[7]), vmul(S(q[8]),h))));
     }
-    v4 b01 = vlt(d2[0], d2[1]);
-    v4 dm  = sel(d2[0], d2[1], b01);
-    v4 b2  = vlt(d2[2], dm);
+    v4 b01 = vlt(dd[0], dd[1]);
+    v4 dm  = sel(dd[0], dd[1], b01);
+    v4 b2  = vlt(dd[2], dm);
     *m2 = vand(hit, b2);
     *m0 = vand(hit, vandn(b01, b2));
     *m1 = vand(hit, vandn(vnot(b01), b2));
@@ -709,7 +722,7 @@ void render(float t, float az, float el, float dist, int w, int h){
                 C3 ga = groundAlbedo(P);
                 alb = ga;
                 if (any(hit)){
-                    dinoMasks(P, hit, &m0, &m1, &m2);
+                    dinoMasks(P, hit, LP, np_, &m0, &m1, &m2);
                     C3 da_ = dinoAlbedo(P, N, m0, m1, m2);
                     alb.r = sel(da_.r, ga.r, hit);
                     alb.g = sel(da_.g, ga.g, hit);
@@ -825,7 +838,7 @@ void render(float t, float az, float el, float dist, int w, int h){
                             vadd(vsub(vsub(d4,d1),d2), d3),
                             vadd(vsub(vsub(d2,d1),d3), d4)));
                         v4 rm0,rm1,rm2;
-                        dinoMasks(RP, rhit, &rm0, &rm1, &rm2);
+                        dinoMasks(RP, rhit, LR, nr, &rm0, &rm1, &rm2);
                         C3 ra = dinoAlbedo(RP, RN, rm0, rm1, rm2);
                         v4 rdif = vmax(v3dot(RN, Lv), S(0.f));
                         v4 lr_ = vadd(vmul(ra.r, vadd(vmul(rdif,S(1.1f)), S(0.34f))), S(0.f));
