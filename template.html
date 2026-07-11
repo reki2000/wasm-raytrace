@@ -285,6 +285,7 @@ ACTIONS.forEach(a => {
 actionBtns[0].el.classList.add('on');
 
 // ---- resolution presets (AUTO = adaptive, others = fixed step) ----
+let resMode = 'auto';   // 'auto' | fixed LV index; declared before highlightRes() reads it
 const RES_LABELS = ['AUTO','1×','1.5×','2×','2.5×','3×','3.5×','4×'];
 const resBtns = RES_LABELS.map(label => mkPick($ressel, label));
 resBtns.forEach((b,i) => { b.onclick = () => { resMode = i===0 ? 'auto' : i-1; highlightRes(); }; });
@@ -426,7 +427,6 @@ highlightScene('sdf');
 // それ以外は LV の固定インデックスに手動ロックする。
 const LV = [[320,180],[480,270],[640,360],[800,450],[960,540],[1120,630],[1280,720]];
 let lvl = 1, ema = 10, lastSwitch = 0;
-let resMode = 'auto';
 const imgs = LV.map(([w,h]) =>
   new ImageData(new Uint8ClampedArray(e.memory.buffer, fbp, w*h*4), w, h));
 const off = document.createElement('canvas');
