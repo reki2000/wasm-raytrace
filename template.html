@@ -73,12 +73,14 @@
   .slabel{font-size:9px;letter-spacing:.18em;color:var(--dim);margin:7px 0 5px}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:4px}
   .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px}
+  .grid4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4px}
   .pick{font:inherit;font-size:9px;letter-spacing:.05em;padding:5px 2px;
     background:transparent;border:1px solid var(--line);color:var(--dim);
     border-radius:2px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .pick.on{color:var(--acc);border-color:rgba(182,240,78,.55);background:rgba(182,240,78,.08)}
   .pick:disabled{opacity:.4;cursor:default}
   #actionwrap{border-top:1px solid var(--line);padding-top:8px;margin-top:2px}
+  #reswrap{border-top:1px solid var(--line);padding-top:8px;margin-top:2px}
 
   /* ---- model credit / license (always visible) ---- */
   #credit{position:fixed;right:18px;top:15px;z-index:6;text-align:right;
@@ -112,6 +114,10 @@
         <div class="slabel">ACTION</div>
         <div class="grid3" id="actionsel"></div>
       </div>
+    </div>
+    <div id="reswrap">
+      <div class="slabel">RESOLUTION</div>
+      <div class="grid4" id="ressel"></div>
     </div>
     <div id="matwrap"></div>
     <div id="meshwrap"></div>
@@ -245,6 +251,7 @@ const meshAction = MESH_MODELS.map(() => 0);   // per-model anim index (set to I
 const $scenesel = document.getElementById('scenesel');
 const $actionwrap = document.getElementById('actionwrap');
 const $actionsel = document.getElementById('actionsel');
+const $ressel = document.getElementById('ressel');
 const $matwrap = document.getElementById('matwrap');
 const $meshwrap = document.getElementById('meshwrap');
 
@@ -269,6 +276,15 @@ ACTIONS.forEach(a => {
   actionBtns.push({el:b, name:a});
 });
 actionBtns[0].el.classList.add('on');
+
+// ---- resolution presets (AUTO = adaptive, others = fixed step) ----
+const RES_LABELS = ['AUTO','1×','1.5×','2×','2.5×','3×','3.5×','4×'];
+const resBtns = RES_LABELS.map(label => mkPick($ressel, label));
+resBtns.forEach((b,i) => { b.onclick = () => { resMode = i===0 ? 'auto' : i-1; highlightRes(); }; });
+function highlightRes(){
+  resBtns.forEach((b,i) => b.classList.toggle('on', i===0 ? resMode==='auto' : resMode===i-1));
+}
+highlightRes();
 
 function highlightScene(key){ sceneBtns.forEach(s => s.el.classList.toggle('on', s.key===key)); }
 function actionNameOf(model, ai){
@@ -390,8 +406,11 @@ function selectAction(a){
 highlightScene('sdf');
 
 // ---- adaptive resolution ----
-const LV = [[320,180],[480,270],[640,360],[800,450],[960,540]];
+// 1x〜4x (辺の長さ基準) を 0.5x 刻みで7段階。resMode='auto' は自動昇降、
+// それ以外は LV の固定インデックスに手動ロックする。
+const LV = [[320,180],[480,270],[640,360],[800,450],[960,540],[1120,630],[1280,720]];
 let lvl = 1, ema = 10, lastSwitch = 0;
+let resMode = 'auto';
 const imgs = LV.map(([w,h]) =>
   new ImageData(new Uint8ClampedArray(e.memory.buffer, fbp, w*h*4), w, h));
 const off = document.createElement('canvas');
@@ -456,6 +475,7 @@ function frame(now){
   t += dt;
   if (now - lastTouch > 4000) az += dt * 0.10;   // auto orbit when idle
 
+  if (resMode !== 'auto') lvl = resMode;
   const [w, h] = LV[lvl];
   const t0 = performance.now();
   if (sceneMode === 'mesh' && meshLoaded && built) {
@@ -469,7 +489,7 @@ function frame(now){
   const rms = performance.now() - t0;
   ema = ema * 0.85 + rms * 0.15;
 
-  if (now - lastSwitch > 800) {
+  if (resMode === 'auto' && now - lastSwitch > 800) {
     if (ema > 15 && lvl > 0)            { lvl--; lastSwitch = now; }
     else if (ema < 7.5 && lvl < LV.length - 1) { lvl++; lastSwitch = now; }
   }

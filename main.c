@@ -9,8 +9,8 @@
 #include "dino_model.h"
 #include "mesh.h"
 
-#define WMAX 960
-#define HMAX 540
+#define WMAX 1280
+#define HMAX 720
 static unsigned char FB[WMAX * HMAX * 4];
 
 __attribute__((export_name("fb")))
