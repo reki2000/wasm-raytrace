@@ -32,7 +32,7 @@ static float FOCX=0.f, FOCZ=0.f;
 void meshSetFocus(float x, float z){ FOCX=x; FOCZ=z; }
 
 // ---------- per-model material (mirrors render.c) ----------
-static int   M_MODE[NMESH]  = {1,1,1,1,1,1};
+static int   M_MODE[NMESH]  = {0,0,0,0,0,0};   // plain: show the GLB's own colors
 static float M_REFL[NMESH]  = {0.5f,0.5f,0.5f,0.5f,0.5f,0.5f};
 static float M_TRAN[NMESH]  = {0.65f,0.65f,0.65f,0.65f,0.65f,0.65f};
 static float M_IOR[NMESH]   = {1.49f,1.49f,1.49f,1.49f,1.49f,1.49f};
@@ -243,7 +243,7 @@ static void shade(const float*ro,const float*rd,int depth,float*out);
 static void shadeMeshHit(const float*ro,const float*rd,float tH,int tri,int depth,float*out){
     int mdl=TMDL[tri];
     int mode=M_MODE[mdl];
-    float refl=M_REFL[mdl], gloss=M_GLOSS[mdl], texA=M_TEX[mdl];
+    float refl=M_REFL[mdl], gloss=M_GLOSS[mdl];
     float P[3]={ro[0]+rd[0]*tH, ro[1]+rd[1]*tH, ro[2]+rd[2]*tH};
     const int *id=IDX+tri*3;
     const float *v0=SV+id[0]*3,*v1=SV+id[1]*3,*v2=SV+id[2]*3;
@@ -253,17 +253,8 @@ static void shadeMeshHit(const float*ro,const float*rd,float tH,int tri,int dept
     float nl=1.f/fsqrt(nx*nx+ny*ny+nz*nz); nx*=nl; ny*=nl; nz*=nl;
     if (nx*rd[0]+ny*rd[1]+nz*rd[2]>0.f){ nx=-nx; ny=-ny; nz=-nz; }
 
+    // color straight from the GLB material (baseColorFactor); no invented pattern
     float alr=COL[tri*3], alg=COL[tri*3+1], alb=COL[tri*3+2];
-    // texture mode: subtle procedural stripe+noise on the top surface (tex slider)
-    if (mode==1 && texA>0.f){
-        float topm=fclampf(ny*1.5f,0.f,1.f);
-        float stripe=0.5f*(fsin(P[0]*9.f+P[2]*2.f)+1.f);
-        float n2=noises(P[0]*3.2f+4.7f, (P[1]*0.6f+P[2])*3.2f);
-        float dk=1.f - 0.28f*stripe*topm*texA;
-        float nm=(0.90f+0.20f*n2);
-        float mix=1.f-texA + texA*nm;
-        alr*=dk*mix; alg*=dk*mix; alb*=dk*mix;
-    }
 
     float ndl=nx*SUN[0]+ny*SUN[1]+nz*SUN[2]; if (ndl<0.f) ndl=0.f;
     float sh=1.f;

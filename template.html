@@ -79,6 +79,13 @@
   .pick.on{color:var(--acc);border-color:rgba(182,240,78,.55);background:rgba(182,240,78,.08)}
   .pick:disabled{opacity:.4;cursor:default}
   #actionwrap{border-top:1px solid var(--line);padding-top:8px;margin-top:2px}
+
+  /* ---- model credit / license (always visible) ---- */
+  #credit{position:fixed;right:18px;top:15px;z-index:6;text-align:right;
+    font-size:9px;letter-spacing:.08em;line-height:1.5;color:var(--dim);
+    pointer-events:none;max-width:52vw}
+  #credit a{color:var(--dim);text-decoration:underline;pointer-events:auto}
+  @media (max-width:640px){ #credit{font-size:8px;top:auto;bottom:40px} }
 </style>
 </head>
 <body>
@@ -94,6 +101,7 @@
   <div class="badge">WASM32 + SIMD128 × 4-RAY PACKETS</div>
 </div>
 <div id="hint">drag: orbit &nbsp;·&nbsp; wheel / pinch: zoom &nbsp;·&nbsp; panel: surface materials</div>
+<div id="credit">恐竜モデル: <a href="https://quaternius.com/packs/animateddinosaurs.html" target="_blank" rel="noopener">Quaternius</a> — Animated Dinosaur Pack · CC0 1.0</div>
 <div id="panel">
   <div id="phead"><span>SCENE // DINO</span><b id="pfold">−</b></div>
   <div id="pbody">
@@ -231,7 +239,7 @@ let built = null;         // array of GLB.buildModel results (packed)
 let boneAll = null;       // Float32Array over e.meshBone()
 let meshLoaded = false, loadPromise = null;
 
-const meshState = MESH_MODELS.map(() => ({ mode:1, tex:1, refl:0.5, gloss:0.5, tran:0.65, ior:1.49 }));
+const meshState = MESH_MODELS.map(() => ({ mode:0, tex:1, refl:0.5, gloss:0.5, tran:0.65, ior:1.49 }));
 const meshAction = MESH_MODELS.map(() => 0);   // per-model anim index (set to Idle on load)
 
 const $scenesel = document.getElementById('scenesel');
