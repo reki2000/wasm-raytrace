@@ -67,6 +67,18 @@
   @media (max-width:640px){
     #panel{left:10px;top:72px;width:212px}
   }
+
+  /* ---- scene / model / action ---- */
+  #scenehead{padding:2px 0 9px}
+  .slabel{font-size:9px;letter-spacing:.18em;color:var(--dim);margin:7px 0 5px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px}
+  .pick{font:inherit;font-size:9px;letter-spacing:.05em;padding:5px 2px;
+    background:transparent;border:1px solid var(--line);color:var(--dim);
+    border-radius:2px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pick.on{color:var(--acc);border-color:rgba(182,240,78,.55);background:rgba(182,240,78,.08)}
+  .pick:disabled{opacity:.4;cursor:default}
+  #actionwrap{border-top:1px solid var(--line);padding-top:8px;margin-top:2px}
 </style>
 </head>
 <body>
@@ -83,12 +95,23 @@
 </div>
 <div id="hint">drag: orbit &nbsp;·&nbsp; wheel / pinch: zoom &nbsp;·&nbsp; panel: surface materials</div>
 <div id="panel">
-  <div id="phead"><span>SURFACE // MAT</span><b id="pfold">−</b></div>
-  <div id="pbody"></div>
+  <div id="phead"><span>SCENE // DINO</span><b id="pfold">−</b></div>
+  <div id="pbody">
+    <div id="scenehead">
+      <div class="slabel">MODEL</div>
+      <div class="grid2" id="scenesel"></div>
+      <div id="actionwrap" style="display:none">
+        <div class="slabel">ACTION</div>
+        <div class="grid3" id="actionsel"></div>
+      </div>
+    </div>
+    <div id="matwrap"></div>
+  </div>
 </div>
 <div id="err"><div>このデモには WebAssembly SIMD128 が必要です。<br>
 Chrome 91+ / Firefox 89+ / Safari 16.4+ で開いてください。</div></div>
 
+<script src="glb.js"></script>
 <script>
 (async () => {
 const B64 = "__WASM_B64__";
@@ -136,7 +159,7 @@ function pushMat(i){
   e.mat(i, s.mode, s.refl, s.tran, s.ior, tex, s.gloss);
 }
 const cards = [];
-const $pb = document.getElementById('pbody');
+const $pb = document.getElementById('matwrap');
 DINOS.forEach((d, i) => {
   const card = document.createElement('div'); card.className = 'dcard';
   const nm = document.createElement('div'); nm.className = 'dname';
@@ -193,6 +216,96 @@ document.getElementById('phead').onclick = () => {
   $fold.textContent = $panel.classList.contains('min') ? '+' : '−';
 };
 if (innerWidth < 640) { $panel.classList.add('min'); $fold.textContent = '+'; }
+
+// ---- scene: SDF herd vs Quaternius glTF models ----
+const MESH_MODELS = ['T-Rex','Velociraptor','Triceratops','Stegosaurus','Parasaurolophus','Apatosaurus'];
+const ACTIONS = ['Idle','Walk','Run','Attack','Jump','Death'];
+let sceneMode = 'sdf';     // 'sdf' | 'mesh'
+let meshModel = null;      // parsed GLB.buildModel result
+let meshAnim = 0;
+let boneView = null;       // Float32Array over e.meshBone()
+let loadingName = null;
+const modelCache = {};
+
+const $scenesel = document.getElementById('scenesel');
+const $actionwrap = document.getElementById('actionwrap');
+const $actionsel = document.getElementById('actionsel');
+const $matwrap = document.getElementById('matwrap');
+
+function mkPick(parent, label){
+  const b = document.createElement('button');
+  b.type='button'; b.className='pick'; b.textContent=label;
+  parent.appendChild(b); return b;
+}
+const sceneBtns = [];
+const sdfBtn = mkPick($scenesel, 'SDF HERD');
+sdfBtn.onclick = () => selectScene('sdf', null);
+sceneBtns.push({el:sdfBtn, key:'sdf'});
+MESH_MODELS.forEach(name => {
+  const b = mkPick($scenesel, name.toUpperCase());
+  b.onclick = () => selectScene('mesh', name);
+  sceneBtns.push({el:b, key:name});
+});
+const actionBtns = [];
+ACTIONS.forEach(a => {
+  const b = mkPick($actionsel, a.toUpperCase());
+  b.onclick = () => selectAction(a);
+  actionBtns.push({el:b, name:a});
+});
+actionBtns[0].el.classList.add('on');   // default: Idle
+
+function highlightScene(key){ sceneBtns.forEach(s => s.el.classList.toggle('on', s.key===key)); }
+function actionNameOf(model, ai){
+  const nm = (model.animNames[ai]||'').split('|').pop();
+  const p = nm.split('_'); return p[p.length-1];
+}
+function highlightAction(){
+  const cur = meshModel ? actionNameOf(meshModel, meshAnim) : null;
+  actionBtns.forEach(b => b.el.classList.toggle('on', b.name===cur));
+}
+function animIndexFor(model, action){
+  const re = new RegExp('_'+action+'$','i');
+  let i = model.anims.findIndex(a => re.test(a.name));
+  if (i<0) i = model.anims.findIndex(a => new RegExp(action,'i').test(a.name));
+  return i<0 ? 0 : i;
+}
+function uploadModel(m){
+  new Float32Array(e.memory.buffer, e.meshPos(),    m.nverts*3).set(m.pos);
+  new Int32Array  (e.memory.buffer, e.meshJoint(),  m.nverts*4).set(m.jnt);
+  new Float32Array(e.memory.buffer, e.meshWeight(), m.nverts*4).set(m.wgt);
+  new Int32Array  (e.memory.buffer, e.meshIndex(),  m.ntris*3).set(m.idx);
+  new Float32Array(e.memory.buffer, e.meshColor(),  m.ntris*3).set(m.col);
+  e.meshSetCounts(m.nverts, m.ntris, m.nj);
+  boneView = new Float32Array(e.memory.buffer, e.meshBone(), m.nj*12);
+}
+async function loadModel(name){
+  if (modelCache[name]) return modelCache[name];
+  const buf = await (await fetch('models/'+name+'.glb')).arrayBuffer();
+  const m = GLB.buildModel(GLB.parseGLB(buf));
+  modelCache[name] = m; return m;
+}
+async function selectScene(mode, name){
+  if (mode==='sdf'){
+    sceneMode='sdf'; meshModel=null; highlightScene('sdf');
+    $actionwrap.style.display='none'; $matwrap.style.display=''; return;
+  }
+  highlightScene(name);
+  $matwrap.style.display='none'; $actionwrap.style.display='';
+  loadingName = name;
+  try {
+    const m = await loadModel(name);
+    if (loadingName!==name) return;        // superseded by a later click
+    uploadModel(m); meshModel = m; sceneMode='mesh';
+    const cur = actionBtns.find(b=>b.el.classList.contains('on'));
+    meshAnim = animIndexFor(m, cur ? cur.name : 'Idle');
+    highlightAction();
+  } catch(err){ console.error('model load failed:', name, err); }
+}
+function selectAction(a){
+  if (!meshModel){ actionBtns.forEach(b=>b.el.classList.toggle('on', b.name===a)); return; }
+  meshAnim = animIndexFor(meshModel, a); highlightAction();
+}
+highlightScene('sdf');
 
 // ---- adaptive resolution ----
 const LV = [[320,180],[480,270],[640,360],[800,450],[960,540]];
@@ -263,7 +376,12 @@ function frame(now){
 
   const [w, h] = LV[lvl];
   const t0 = performance.now();
-  e.render(t, az, el, dist, w, h);
+  if (sceneMode === 'mesh' && meshModel && boneView) {
+    boneView.set(GLB.sampleBones(meshModel, meshAnim, t));
+    e.renderMesh(az, el, dist, w, h);
+  } else {
+    e.render(t, az, el, dist, w, h);
+  }
   const rms = performance.now() - t0;
   ema = ema * 0.85 + rms * 0.15;
 
