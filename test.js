@@ -23,5 +23,16 @@ const fs = require('fs');
     for (let i=0,j=0;i<W*H;i++){ rgb[j++]=m[i*4]; rgb[j++]=m[i*4+1]; rgb[j++]=m[i*4+2]; }
     fs.writeFileSync(name+'.ppm', Buffer.concat([Buffer.from(`P6\n${W} ${H}\n255\n`), rgb]));
   }
+  // per-dino surface materials: mat(i, mode, refl, tran, ior, tex, gloss)
+  e.mat(0, 2, 0.85, 0.65, 1.49, 0.0, 0.9);   // theropod: metallic
+  e.mat(1, 3, 0.35, 0.85, 1.49, 0.0, 0.6);   // stego: acrylic
+  e.mat(2, 0, 0.50, 0.65, 1.49, 0.0, 0.5);   // trike: plain
+  e.render(9.5, 0.85, 0.26, 4.5, W, H);
+  {
+    const m = new Uint8Array(e.memory.buffer, fbp, W*H*4);
+    const rgb = Buffer.alloc(W*H*3);
+    for (let i=0,j=0;i<W*H;i++){ rgb[j++]=m[i*4]; rgb[j++]=m[i*4+1]; rgb[j++]=m[i*4+2]; }
+    fs.writeFileSync('f5.ppm', Buffer.concat([Buffer.from(`P6\n${W} ${H}\n255\n`), rgb]));
+  }
   console.log('frames dumped');
 })().catch(e => { console.error(e); process.exit(1); });
