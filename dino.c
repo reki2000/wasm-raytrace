@@ -115,6 +115,12 @@ static void coneA(float ax,float ay,float az, float bx,float by,float bz,
 static void cone(float ax,float ay,float az, float bx,float by,float bz, float r1,float r2){
     coneA(ax,ay,az,bx,by,bz,r1,r2,1.f,1.f,1.f);
 }
+// cone + record the segment (species-local coords) for exact material id in albedo
+static void boneCone(float *s, float ax,float ay,float az, float bx,float by,float bz,
+                     float r1,float r2){
+    s[0]=ax; s[1]=ay; s[2]=az; s[3]=bx; s[4]=by; s[5]=bz; s[6]=r1; s[7]=r2;
+    cone(ax,ay,az,bx,by,bz,r1,r2);
+}
 
 // eyes: 2 per species; hard-min spheres (not smin-blended) so they stay crisp
 #define NEY 6
@@ -347,6 +353,12 @@ static float spineTop(float x, float bob){
 // plate params for exact material id in albedo: px, baseY, height, zOff, r1 (stego-local)
 #define NPLT 9
 static float PLT[NPLT][5];
+// bone-part segments (ax,ay,az,bx,by,bz,r1,r2 species-local) for exact material id
+#define NSPK 4
+static float SPK[NSPK][8];   // stego thagomizer spikes
+#define NTBN 5
+static float TBN[NTBN][8];   // trike brow horns x2 + nose horn + beak + jaw
+static float FRLY;           // trike frill center y (incl. bob + head dip)
 
 // ---- stegosaurus ----
 static void stego(const Kin *K){
@@ -384,10 +396,10 @@ static void stego(const Kin *K){
         PLT[i][0]=PX[i]; PLT[i][1]=by; PLT[i][2]=PH_[i]; PLT[i][3]=zo; PLT[i][4]=r1;
     }
     // thagomizer: 4 tail spikes
-    cone(-1.80f, 0.78f, z3+0.06f, -2.02f, 0.98f, z3+0.16f, 0.030f, 0.005f);
-    cone(-1.80f, 0.78f, z3-0.06f, -2.02f, 0.98f, z3-0.16f, 0.030f, 0.005f);
-    cone(-1.66f, 0.78f, z3+0.07f, -1.84f, 1.00f, z3+0.17f, 0.030f, 0.005f);
-    cone(-1.66f, 0.78f, z3-0.07f, -1.84f, 1.00f, z3-0.17f, 0.030f, 0.005f);
+    boneCone(SPK[0], -1.80f, 0.78f, z3+0.06f, -2.02f, 0.98f, z3+0.16f, 0.030f, 0.005f);
+    boneCone(SPK[1], -1.80f, 0.78f, z3-0.06f, -2.02f, 0.98f, z3-0.16f, 0.030f, 0.005f);
+    boneCone(SPK[2], -1.66f, 0.78f, z3+0.07f, -1.84f, 1.00f, z3+0.17f, 0.030f, 0.005f);
+    boneCone(SPK[3], -1.66f, 0.78f, z3-0.07f, -1.84f, 1.00f, z3-0.17f, 0.030f, 0.005f);
     // legs (trot: diagonal pairs)
     float P = 3.1415927f;
     qleg( 0.34f, 0.74f+bob,  1.f, 0.22f, ph,     run, 0.25f, 0.115f, 0.062f, -0.6f);
@@ -408,9 +420,9 @@ static void trice(const Kin *K){
     cone( 0.30f, 0.95f+bob, 0.f, 0.62f, 0.88f+bob, 0.f, 0.38f, 0.27f);
     // big head + beak
     cone(0.62f, 0.95f+bob+hd, 0.f, 1.02f, 0.90f+bob+hd, 0.f, 0.205f, 0.125f);
-    cone(1.02f, 0.86f+bob+hd, 0.f, 1.24f, 0.78f+bob+hd, 0.f, 0.075f, 0.012f);
+    boneCone(TBN[3], 1.02f, 0.86f+bob+hd, 0.f, 1.24f, 0.78f+bob+hd, 0.f, 0.075f, 0.012f);
     float chew = 0.5f + 0.5f*fsin(GT*1.2f + 2.2f);
-    cone(0.97f, 0.795f+bob+hd, 0.f, 1.19f, 0.718f+bob+hd - 0.026f*chew, 0.f, 0.058f, 0.010f);
+    boneCone(TBN[4], 0.97f, 0.795f+bob+hd, 0.f, 1.19f, 0.718f+bob+hd - 0.026f*chew, 0.f, 0.058f, 0.010f);
     EYP[4][0]=0.965f+OX; EYP[4][1]=0.975f+bob+hd; EYP[4][2]= 0.108f+OZ;
     EYP[5][0]=0.965f+OX; EYP[5][1]=0.975f+bob+hd; EYP[5][2]=-0.108f+OZ;
     EYRAD[4]=EYRAD[5]=0.022f;
@@ -418,13 +430,14 @@ static void trice(const Kin *K){
     // frill: thin disc normal to +X (axis pure X), widened y/z
     {
         float sy = 7.0f, sz = 5.6f;
-        coneA(0.70f, 1.20f+bob+hd, 0.f, 0.62f, 1.20f+bob+hd, 0.f,
+        FRLY = 1.20f+bob+hd;
+        coneA(0.70f, FRLY, 0.f, 0.62f, FRLY, 0.f,
               0.050f, 0.050f, 1.f, 1.f/(sy*sy), 1.f/(sz*sz));
     }
     // brow horns + nose horn
-    cone(0.94f, 1.04f+bob+hd,  0.105f, 1.34f, 1.38f+bob+hd,  0.18f, 0.042f, 0.006f);
-    cone(0.94f, 1.04f+bob+hd, -0.105f, 1.34f, 1.38f+bob+hd, -0.18f, 0.042f, 0.006f);
-    cone(1.06f, 0.95f+bob+hd, 0.f, 1.15f, 1.13f+bob+hd, 0.f, 0.038f, 0.007f);
+    boneCone(TBN[0], 0.94f, 1.04f+bob+hd,  0.105f, 1.34f, 1.38f+bob+hd,  0.18f, 0.042f, 0.006f);
+    boneCone(TBN[1], 0.94f, 1.04f+bob+hd, -0.105f, 1.34f, 1.38f+bob+hd, -0.18f, 0.042f, 0.006f);
+    boneCone(TBN[2], 1.06f, 0.95f+bob+hd, 0.f, 1.15f, 1.13f+bob+hd, 0.f, 0.038f, 0.007f);
     // tail
     float z2 = 0.07f*fsin(ph-1.4f);
     cone(-0.55f, 0.85f+bob, 0.f, -1.05f, 0.76f, z2*0.5f, 0.19f, 0.085f);
@@ -538,6 +551,17 @@ static inline void dinoMasks(V3 P, v4 hit, const unsigned char *L, int n,
     *m1 = vand(hit, vandn(vnot(b01), b2));
 }
 
+// tapered-segment distance in species-local coords (for exact material id)
+static inline v4 segDist(v4 px, v4 py, v4 pz, const float *s){
+    v4 ax=vsub(px,S(s[0])), ay=vsub(py,S(s[1])), az=vsub(pz,S(s[2]));
+    float bx=s[3]-s[0], by=s[4]-s[1], bz=s[5]-s[2];
+    float il2 = 1.f/(bx*bx + by*by + bz*bz);
+    v4 h = clamp01(vmul(vadd(vadd(vmul(ax,S(bx)),vmul(ay,S(by))),vmul(az,S(bz))), S(il2)));
+    v4 qx=vsub(ax,vmul(S(bx),h)), qy=vsub(ay,vmul(S(by),h)), qz=vsub(az,vmul(S(bz),h));
+    return vsub(vsqrt(vadd(vadd(vmul(qx,qx),vmul(qy,qy)),vmul(qz,qz))),
+                vadd(S(s[6]), vmul(S(s[7]-s[6]), h)));
+}
+
 // species albedo (textured)
 static inline C3 dinoAlbedo(V3 P, V3 N, v4 m0, v4 m1, v4 m2){
     // local coords
@@ -572,22 +596,35 @@ static inline C3 dinoAlbedo(V3 P, V3 N, v4 m0, v4 m1, v4 m2){
     v4 pm = vand(m1, vlt(pd, S(0.02f)));
     v4 pr = mixv(S(0.55f), S(0.88f), ty), pg = mixv(S(0.16f), S(0.42f), ty), pb = mixv(S(0.10f), S(0.16f), ty);
     r1c = sel(pr, r1c, pm); g1c = sel(pg, g1c, pm); b1c = sel(pb, b1c, pm);
-    v4 sm_ = vand(m1, vand(vlt(lx, S(-1.55f)), vgt(P.y, S(0.62f))));
+    // thagomizer spikes bone (exact segment distance, not a coarse box)
+    v4 sd_ = S(100.f);
+    if (any(m1)) for (int i=0;i<NSPK;i++) sd_ = vmin(sd_, segDist(lx, P.y, lz, SPK[i]));
+    v4 sm_ = vand(m1, vlt(sd_, S(0.025f)));
     r1c = sel(S(0.82f), r1c, sm_); g1c = sel(S(0.78f), g1c, sm_); b1c = sel(S(0.66f), b1c, sm_);
 
     // trike: grey-green; frill rings + warm rim; horns/beak bone
     v4 r2c = S(0.37f), g2c = S(0.39f), b2c = S(0.32f);
-    v4 fm = vand(m2, vand(vgt(lx, S(0.40f)), vand(vlt(lx, S(0.92f)), vgt(P.y, S(0.92f)))));
-    v4 fr = vsqrt(vadd(vmul(vsub(P.y,S(1.20f)),vsub(P.y,S(1.20f))), vmul(vmul(lz,lz),S(0.85f))));
-    v4 ring = vmul(S(0.5f), vadd(vsin(vsub(vmul(fr,S(26.f)),S(1.6f))), S(1.f)));
-    ring = mixv(S(0.5f), ring, texf);
-    v4 fr_r = mixv(S(0.44f), S(0.27f), ring), fr_g = mixv(S(0.42f), S(0.24f), ring), fr_b = mixv(S(0.34f), S(0.20f), ring);
-    v4 rim = clamp01(vmul(vsub(fr, S(0.36f)), S(7.f)));
-    fr_r = mixv(fr_r, S(0.78f), rim); fr_g = mixv(fr_g, S(0.36f), rim); fr_b = mixv(fr_b, S(0.18f), rim);
-    r2c = sel(fr_r, r2c, fm); g2c = sel(fr_g, g2c, fm); b2c = sel(fr_b, b2c, fm);
-    v4 hm_ = vand(m2, vor(vand(vgt(P.y, S(1.06f)), vgt(lx, S(0.88f))),
-                          vand(vgt(lx, S(1.05f)), vlt(P.y, S(0.90f)))));
-    r2c = sel(S(0.80f), r2c, hm_); g2c = sel(S(0.74f), g2c, hm_); b2c = sel(S(0.60f), b2c, hm_);
+    if (any(m2)){
+        // frill membership: exact anisotropic-disc distance (axis (0.70,FRLY,0)->(0.62,FRLY,0))
+        v4 pax = vsub(lx, S(0.70f)), pay = vsub(P.y, S(FRLY));
+        v4 fh = clamp01(vmul(vmul(pax, S(-0.08f)), S(1.f/0.0064f)));
+        v4 fqx = vadd(pax, vmul(S(0.08f), fh));
+        v4 fd = vsub(vsqrt(vadd(vadd(vmul(fqx,fqx), vmul(vmul(pay,pay), S(1.f/49.f))),
+                                vmul(vmul(lz,lz), S(1.f/31.36f)))), S(0.05f));
+        v4 fm = vand(m2, vlt(fd, S(0.02f)));
+        v4 fr = vsqrt(vadd(vmul(pay,pay), vmul(vmul(lz,lz),S(0.85f))));
+        v4 ring = vmul(S(0.5f), vadd(vsin(vsub(vmul(fr,S(26.f)),S(1.6f))), S(1.f)));
+        ring = mixv(S(0.5f), ring, texf);
+        v4 fr_r = mixv(S(0.44f), S(0.27f), ring), fr_g = mixv(S(0.42f), S(0.24f), ring), fr_b = mixv(S(0.34f), S(0.20f), ring);
+        v4 rim = clamp01(vmul(vsub(fr, S(0.36f)), S(7.f)));
+        fr_r = mixv(fr_r, S(0.78f), rim); fr_g = mixv(fr_g, S(0.36f), rim); fr_b = mixv(fr_b, S(0.18f), rim);
+        r2c = sel(fr_r, r2c, fm); g2c = sel(fr_g, g2c, fm); b2c = sel(fr_b, b2c, fm);
+        // horns + beak + jaw bone (exact segment distance, not a coarse box)
+        v4 td_ = S(100.f);
+        for (int i=0;i<NTBN;i++) td_ = vmin(td_, segDist(lx, P.y, lz, TBN[i]));
+        v4 hm_ = vand(m2, vlt(td_, S(0.025f)));
+        r2c = sel(S(0.80f), r2c, hm_); g2c = sel(S(0.74f), g2c, hm_); b2c = sel(S(0.60f), b2c, hm_);
+    }
 
     C3 c;
     c.r = sel(r0, sel(r1c, r2c, m1), m0);
