@@ -462,6 +462,57 @@ static void shade(const float*ro,const float*rd,int depth,float*out){
     skyCols(rd,1,out);
 }
 
+// 4-ray packet primary trace: one shared traversal stack, per-lane slab + per-lane
+// best. Ray dirs in SoA lanes; each triangle scalar-splatted and tested against all
+// 4 rays at once. Writes per-lane nearest t (tHitOut) and hit triangle id (hitId[4],
+// -1 = miss). Shading stays scalar (called per lane) so output matches shade().
+static void traceMeshP(const float*ro, V3 rd, v4 tmax, v4*tHitOut, int*hitId){
+    v4 invx=vdiv(S(1.f),rd.x), invy=vdiv(S(1.f),rd.y), invz=vdiv(S(1.f),rd.z);
+    v4 rox=S(ro[0]),roy=S(ro[1]),roz=S(ro[2]);
+    v4 best=tmax, hitv=wasm_i32x4_splat(-1);
+    if (NNODE==0){ *tHitOut=best; wasm_v128_store(hitId,hitv); return; }
+    int st[160],sp=0; st[sp++]=0;
+    while (sp>0){
+        int node=st[--sp];
+        const float *mn=NMIN+node*3,*mx=NMAX+node*3;
+        v4 lox=vmul(vsub(S(mn[0]),rox),invx), hix=vmul(vsub(S(mx[0]),rox),invx);
+        v4 t0=vmin(lox,hix), t1=vmax(lox,hix);
+        v4 loy=vmul(vsub(S(mn[1]),roy),invy), hiy=vmul(vsub(S(mx[1]),roy),invy);
+        t0=vmax(t0,vmin(loy,hiy)); t1=vmin(t1,vmax(loy,hiy));
+        v4 loz=vmul(vsub(S(mn[2]),roz),invz), hiz=vmul(vsub(S(mx[2]),roz),invz);
+        t0=vmax(t0,vmin(loz,hiz)); t1=vmin(t1,vmax(loz,hiz));
+        t0=vmax(t0,S(0.f));
+        if (!any(vand(vle(t0,t1), vlt(t0,best)))) continue;   // no lane needs this node
+        if (NLEFT[node]<0){
+            int s=NSTART[node],c=NCOUNT[node];
+            for (int p=s;p<s+c;p++){
+                v4 e1x=S(PE1X[p]),e1y=S(PE1Y[p]),e1z=S(PE1Z[p]);
+                v4 e2x=S(PE2X[p]),e2y=S(PE2Y[p]),e2z=S(PE2Z[p]);
+                v4 v0x=S(PV0X[p]),v0y=S(PV0Y[p]),v0z=S(PV0Z[p]);
+                v4 px=vfnma(rd.z,e2y, vmul(rd.y,e2z));   // rd x e2
+                v4 py=vfnma(rd.x,e2z, vmul(rd.z,e2x));
+                v4 pz=vfnma(rd.y,e2x, vmul(rd.x,e2y));
+                v4 det=vfma(e1z,pz, vfma(e1y,py, vmul(e1x,px)));
+                v4 invd=vdiv(S(1.f),det);
+                v4 tvx=vsub(rox,v0x),tvy=vsub(roy,v0y),tvz=vsub(roz,v0z);
+                v4 u=vmul(vfma(tvz,pz, vfma(tvy,py, vmul(tvx,px))), invd);
+                v4 qx=vfnma(tvz,e1y, vmul(tvy,e1z));   // tv x e1
+                v4 qy=vfnma(tvx,e1z, vmul(tvz,e1x));
+                v4 qz=vfnma(tvy,e1x, vmul(tvx,e1y));
+                v4 vv=vmul(vfma(rd.z,qz, vfma(rd.y,qy, vmul(rd.x,qx))), invd);
+                v4 tt=vmul(vfma(e2z,qz, vfma(e2y,qy, vmul(e2x,qx))), invd);
+                v4 ok=vgt(vabs(det), S(1e-9f));
+                ok=vand(ok, vge(u,S(0.f)));  ok=vand(ok, vle(u,S(1.f)));
+                ok=vand(ok, vge(vv,S(0.f))); ok=vand(ok, vle(vadd(u,vv),S(1.f)));
+                ok=vand(ok, vgt(tt,S(1e-4f))); ok=vand(ok, vlt(tt,best));
+                best=sel(tt,best,ok);
+                hitv=sel(wasm_i32x4_splat(PTRI[p]), hitv, ok);
+            }
+        } else { st[sp++]=NLEFT[node]; st[sp++]=NLEFT[node]+1; }
+    }
+    *tHitOut=best; wasm_v128_store(hitId,hitv);
+}
+
 // ---------- frame ----------
 void renderMesh(float az, float el, float dist, int w, int h, unsigned char* fb){
     float lx=0.52f,ly=0.64f,lz=0.46f;
@@ -488,20 +539,40 @@ void renderMesh(float az, float el, float dist, int w, int h, unsigned char* fb)
     float ux=-rz*fy, uy=rz*fx-rx*fz, uz=rx*fy;
     const float FL=1.8f;
     float ih=2.0f/(float)h;
+    float ro[3]={cxx,cyy,czz};
+    v4 X4=wasm_f32x4_make(0.f,1.f,2.f,3.f);
 
     for (int y=0;y<h;y++){
         float pyf=((float)h*0.5f-((float)y+0.5f))*ih;
         unsigned char *row=fb+(unsigned)(y*w)*4u;
-        for (int x=0;x<w;x++){
-            float pxf=((float)x+0.5f-(float)w*0.5f)*ih;
-            float rdx=fx*FL+rx*pxf+ux*pyf, rdy=fy*FL+uy*pyf, rdz=fz*FL+rz*pxf+uz*pyf;
-            float rn=1.f/fsqrt(rdx*rdx+rdy*rdy+rdz*rdz);
-            float ro[3]={cxx,cyy,czz}, rd[3]={rdx*rn,rdy*rn,rdz*rn};
-            float c[3]; shade(ro,rd,0,c);
-            row[x*4]  =(unsigned)(fsqrt(fclampf(c[0],0.f,1.f))*255.f);
-            row[x*4+1]=(unsigned)(fsqrt(fclampf(c[1],0.f,1.f))*255.f);
-            row[x*4+2]=(unsigned)(fsqrt(fclampf(c[2],0.f,1.f))*255.f);
-            row[x*4+3]=0xff;
+        for (int x=0;x<w;x+=4){
+            // 4 horizontal primary rays as a SoA packet (matches render.c layout)
+            v4 pxf=vmul(vsub(vadd(S((float)x+0.5f),X4), S((float)w*0.5f)), S(ih));
+            v4 pyv=S(pyf);
+            V3 rd=v3norm(v3(
+                vadd(vadd(S(fx*FL), vmul(S(rx),pxf)), vmul(S(ux),pyv)),
+                vadd(S(fy*FL), vmul(S(uy),pyv)),
+                vadd(vadd(S(fz*FL), vmul(S(rz),pxf)), vmul(S(uz),pyv))));
+            v4 down=vlt(rd.y, S(-1e-4f));
+            v4 tg=sel(vdiv(S(-cyy), rd.y), S(1e9f), down);   // ground plane t
+            v4 tmax=sel(tg, S(1e9f), vlt(tg,S(1e8f)));
+            v4 tHitv; int hitId[4];
+            traceMeshP(ro, rd, tmax, &tHitv, hitId);
+            // per-lane scalar shading (bit-identical to shade()); handles w%4 tail
+            float rdxA[4],rdyA[4],rdzA[4],tgA[4],tHA[4];
+            wasm_v128_store(rdxA,rd.x); wasm_v128_store(rdyA,rd.y); wasm_v128_store(rdzA,rd.z);
+            wasm_v128_store(tgA,tg);    wasm_v128_store(tHA,tHitv);
+            for (int l=0; l<4 && x+l<w; l++){
+                float rdl[3]={rdxA[l],rdyA[l],rdzA[l]}, c[3];
+                if (hitId[l]>=0)        shadeMeshHit(ro, rdl, tHA[l], hitId[l], 0, c);
+                else if (tgA[l]<1e8f)   shadeGround(ro, rdl, tgA[l], 0, c);
+                else                    skyCols(rdl, 1, c);
+                unsigned char *px=row+(unsigned)(x+l)*4u;
+                px[0]=(unsigned)(fsqrt(fclampf(c[0],0.f,1.f))*255.f);
+                px[1]=(unsigned)(fsqrt(fclampf(c[1],0.f,1.f))*255.f);
+                px[2]=(unsigned)(fsqrt(fclampf(c[2],0.f,1.f))*255.f);
+                px[3]=0xff;
+            }
         }
     }
 }
