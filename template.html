@@ -250,8 +250,8 @@ let built = null;         // array of GLB.buildModel results (packed)
 let boneAll = null;       // Float32Array over e.meshBone()
 let meshLoaded = false, loadPromise = null;
 
-const meshState = MESH_MODELS.map(() => ({ mode:0, tex:1, refl:0.5, gloss:0.5, tran:0.65, ior:1.49, smooth:true }));
-const meshAction = MESH_MODELS.map(() => 0);   // per-model anim index (set to Idle on load)
+const meshState = MESH_MODELS.map(() => ({ mode:0, tex:1, refl:0.5, gloss:0.5, tran:0.65, ior:1.49, smooth:false }));
+const meshAction = MESH_MODELS.map(() => 0);   // per-model anim index (set to Walk on load)
 const meshTravel = MESH_MODELS.map(() => 0);   // forward ground distance along +Z
 const meshAutoRun = MESH_MODELS.map(() => false); // auto-running to rejoin the herd?
 
@@ -282,7 +282,7 @@ ACTIONS.forEach(a => {
   b.onclick = () => selectAction(a);
   actionBtns.push({el:b, name:a});
 });
-actionBtns[0].el.classList.add('on');
+actionBtns[ACTIONS.indexOf('Walk')].el.classList.add('on');
 
 // ---- resolution presets (AUTO = adaptive, others = fixed step) ----
 let resMode = 'auto';   // 'auto' | fixed LV index; declared before highlightRes() reads it
@@ -385,7 +385,7 @@ async function loadAll(){
       col.push(m.col[t*3],m.col[t*3+1],m.col[t*3+2]); tmdl.push(i);
     }
     vb+=m.nverts; tb+=m.ntris; jb+=m.nj;
-    meshAction[i]=animIndexFor(m,'Idle');
+    meshAction[i]=animIndexFor(m,'Walk');
     // ground speed matched to each clip's gait so feet don't slide
     m.runAnim   = animIndexFor(m,'Run');
     m.walkSpeed = GLB.gaitSpeed(m, animIndexFor(m,'Walk'));
@@ -426,7 +426,7 @@ function selectAction(a){
   built[focusIndex].curAnim=meshAction[focusIndex];
   highlightAction();
 }
-highlightScene('sdf');
+enterMesh(MESH_MODELS.indexOf('Velociraptor'));
 
 // ---- adaptive resolution ----
 // 1x〜4x (辺の長さ基準) を 0.5x 刻みで7段階。resMode='auto' は自動昇降、
