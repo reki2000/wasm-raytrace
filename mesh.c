@@ -322,10 +322,11 @@ static void envReflect(const float*P,const float*rd,float*o){
 // ---------- shading (recursive: floor mirror + acrylic see-through) ----------
 static void shade(const float*ro,const float*rd,int depth,float*out);
 
-static void shadeMeshHit(const float*ro,const float*rd,float tH,int tri,int depth,float*out){
+// Shading normal for a mesh hit: face normal, ray-facing flip (records `enter`
+// for acrylic), then optional Gouraud interpolation of the welded vertex normals.
+// Factored out so the packet path can compute it per lane before batching shadows.
+static int meshHitNormal(const float*ro,const float*rd,float tH,int tri,float*N){
     int mdl=TMDL[tri];
-    int mode=M_MODE[mdl];
-    float refl=M_REFL[mdl], gloss=M_GLOSS[mdl];
     float P[3]={ro[0]+rd[0]*tH, ro[1]+rd[1]*tH, ro[2]+rd[2]*tH};
     const int *id=IDX+tri*3;
     const float *v0=SV+id[0]*3,*v1=SV+id[1]*3,*v2=SV+id[2]*3;
@@ -333,11 +334,8 @@ static void shadeMeshHit(const float*ro,const float*rd,float tH,int tri,int dept
     float bx=v2[0]-v0[0],by=v2[1]-v0[1],bz=v2[2]-v0[2];
     float nx=ay*bz-az*by, ny=az*bx-ax*bz, nz=ax*by-ay*bx;
     float nl=1.f/fsqrt(nx*nx+ny*ny+nz*nz); nx*=nl; ny*=nl; nz*=nl;
-    // acrylic (mode 3): normal facing the ray -> entering the body (inside);
-    // normal pointing the same way as the ray -> leaving it (outside)
     int enter = nx*rd[0]+ny*rd[1]+nz*rd[2] <= 0.f;
     if (!enter){ nx=-nx; ny=-ny; nz=-nz; }
-
     if (M_SMOOTH[mdl]){              // welded: Gouraud — interpolate vertex normals
         float vpx=P[0]-v0[0], vpy=P[1]-v0[1], vpz=P[2]-v0[2];
         float d00=ax*ax+ay*ay+az*az, d01=ax*bx+ay*by+az*bz, d11=bx*bx+by*by+bz*bz;
@@ -352,16 +350,23 @@ static void shadeMeshHit(const float*ro,const float*rd,float tH,int tri,int dept
         if (sx*rd[0]+sy*rd[1]+sz*rd[2]>0.f){ sx=-sx; sy=-sy; sz=-sz; }
         nx=sx; ny=sy; nz=sz;
     }
+    N[0]=nx; N[1]=ny; N[2]=nz; return enter;
+}
+
+// Shade a mesh hit given its precomputed shading normal, `enter` flag and sun
+// shadow factor (the packet path supplies these so the shadow ray can be batched).
+static void shadeMeshHit(const float*ro,const float*rd,float tH,int tri,int depth,
+                         const float*Nin,int enter,float sh,float*out){
+    int mdl=TMDL[tri];
+    int mode=M_MODE[mdl];
+    float refl=M_REFL[mdl], gloss=M_GLOSS[mdl];
+    float P[3]={ro[0]+rd[0]*tH, ro[1]+rd[1]*tH, ro[2]+rd[2]*tH};
+    float nx=Nin[0], ny=Nin[1], nz=Nin[2];
 
     // color straight from the GLB material (baseColorFactor); no invented pattern
     float alr=COL[tri*3], alg=COL[tri*3+1], alb=COL[tri*3+2];
 
     float ndl=nx*SUN[0]+ny*SUN[1]+nz*SUN[2]; if (ndl<0.f) ndl=0.f;
-    float sh=1.f;
-    if (ndl>0.02f){
-        float so[3]={P[0]+nx*0.006f,P[1]+ny*0.006f,P[2]+nz*0.006f};
-        if (occluded(so,SUN,20.f)) sh=0.25f;
-    }
     float dif=ndl*sh;
     float hx=SUN[0]-rd[0],hy=SUN[1]-rd[1],hz=SUN[2]-rd[2];
     float hl=1.f/fsqrt(hx*hx+hy*hy+hz*hz); hx*=hl; hy*=hl; hz*=hl;
@@ -425,12 +430,10 @@ static void shadeMeshHit(const float*ro,const float*rd,float tH,int tri,int dept
     out[0]=cr; out[1]=cg; out[2]=cb;
 }
 
-static void shadeGround(const float*ro,const float*rd,float tg,int depth,float*out){
+static void shadeGround(const float*ro,const float*rd,float tg,int depth,float sh,float*out){
     float P[3]={ro[0]+rd[0]*tg, 0.f, ro[2]+rd[2]*tg};
     float ga[3]; groundCols(P[0],P[2],ga);
-    float ndl=SUN[1], sh=1.f;
-    float so[3]={P[0],0.012f,P[2]};
-    if (occluded(so,SUN,20.f)) sh=0.3f;
+    float ndl=SUN[1];
     float dif=ndl*sh, amb=1.f;
     float cr=ga[0]*(dif*1.30f+amb*0.42f);
     float cg=ga[1]*(dif*1.22f+amb*0.50f);
@@ -454,11 +457,29 @@ static void shadeGround(const float*ro,const float*rd,float tg,int depth,float*o
 }
 
 // nearest of mesh / ground / sky
+// Scalar convenience wrapper (secondary/recursive rays): compute normal + sun
+// shadow, then shade. The primary packet path computes these batched instead.
+static void shadeMeshHitAuto(const float*ro,const float*rd,float tH,int tri,int depth,float*out){
+    float N[3]; int enter=meshHitNormal(ro,rd,tH,tri,N);
+    float ndl=N[0]*SUN[0]+N[1]*SUN[1]+N[2]*SUN[2]; if (ndl<0.f) ndl=0.f;
+    float sh=1.f;
+    if (ndl>0.02f){
+        float P[3]={ro[0]+rd[0]*tH, ro[1]+rd[1]*tH, ro[2]+rd[2]*tH};
+        float so[3]={P[0]+N[0]*0.006f,P[1]+N[1]*0.006f,P[2]+N[2]*0.006f};
+        if (occluded(so,SUN,20.f)) sh=0.25f;
+    }
+    shadeMeshHit(ro,rd,tH,tri,depth,N,enter,sh,out);
+}
+
 static void shade(const float*ro,const float*rd,int depth,float*out){
     float tg = rd[1]<-1e-4f ? (-ro[1]/rd[1]) : 1e9f;
     float tMesh; int tri=traceMesh(ro,rd,(tg<1e8f?tg:1e9f),&tMesh);
-    if (tri>=0){ shadeMeshHit(ro,rd,tMesh,tri,depth,out); return; }
-    if (tg<1e8f){ shadeGround(ro,rd,tg,depth,out); return; }
+    if (tri>=0){ shadeMeshHitAuto(ro,rd,tMesh,tri,depth,out); return; }
+    if (tg<1e8f){
+        float so[3]={ro[0]+rd[0]*tg, 0.012f, ro[2]+rd[2]*tg};
+        float sh=occluded(so,SUN,20.f)?0.3f:1.f;
+        shadeGround(ro,rd,tg,depth,sh,out); return;
+    }
     skyCols(rd,1,out);
 }
 
@@ -513,6 +534,58 @@ static void traceMeshP(const float*ro, V3 rd, v4 tmax, v4*tHitOut, int*hitId){
     *tHitOut=best; wasm_v128_store(hitId,hitv);
 }
 
+// 4-ray packet sun-shadow (any-hit). All rays share the sun direction; only the
+// origins differ (one per lane). `active` masks the lanes that actually need a
+// shadow test. Returns a per-lane mask (all-ones where an occluder was found).
+static v4 occludedP(v4 rox, v4 roy, v4 roz, v4 active, float tmax){
+    v4 res=wasm_i32x4_splat(0);
+    if (NNODE==0) return res;
+    v4 ddx=S(SUN[0]),ddy=S(SUN[1]),ddz=S(SUN[2]);
+    v4 invx=S(1.f/SUN[0]),invy=S(1.f/SUN[1]),invz=S(1.f/SUN[2]);
+    v4 live=active;
+    int st[160],sp=0; st[sp++]=0;
+    while (sp>0){
+        int node=st[--sp];
+        const float *mn=NMIN+node*3,*mx=NMAX+node*3;
+        v4 lox=vmul(vsub(S(mn[0]),rox),invx), hix=vmul(vsub(S(mx[0]),rox),invx);
+        v4 t0=vmin(lox,hix), t1=vmax(lox,hix);
+        v4 loy=vmul(vsub(S(mn[1]),roy),invy), hiy=vmul(vsub(S(mx[1]),roy),invy);
+        t0=vmax(t0,vmin(loy,hiy)); t1=vmin(t1,vmax(loy,hiy));
+        v4 loz=vmul(vsub(S(mn[2]),roz),invz), hiz=vmul(vsub(S(mx[2]),roz),invz);
+        t0=vmax(t0,vmin(loz,hiz)); t1=vmin(t1,vmax(loz,hiz));
+        t0=vmax(t0,S(0.f)); t1=vmin(t1,S(tmax));
+        if (!any(vand(live, vle(t0,t1)))) continue;
+        if (NLEFT[node]<0){
+            int s=NSTART[node],c=NCOUNT[node];
+            for (int p=s;p<s+c;p++){
+                v4 e1x=S(PE1X[p]),e1y=S(PE1Y[p]),e1z=S(PE1Z[p]);
+                v4 e2x=S(PE2X[p]),e2y=S(PE2Y[p]),e2z=S(PE2Z[p]);
+                v4 v0x=S(PV0X[p]),v0y=S(PV0Y[p]),v0z=S(PV0Z[p]);
+                v4 px=vfnma(ddz,e2y, vmul(ddy,e2z));
+                v4 py=vfnma(ddx,e2z, vmul(ddz,e2x));
+                v4 pz=vfnma(ddy,e2x, vmul(ddx,e2y));
+                v4 det=vfma(e1z,pz, vfma(e1y,py, vmul(e1x,px)));
+                v4 invd=vdiv(S(1.f),det);
+                v4 tvx=vsub(rox,v0x),tvy=vsub(roy,v0y),tvz=vsub(roz,v0z);
+                v4 u=vmul(vfma(tvz,pz, vfma(tvy,py, vmul(tvx,px))), invd);
+                v4 qx=vfnma(tvz,e1y, vmul(tvy,e1z));
+                v4 qy=vfnma(tvx,e1z, vmul(tvz,e1x));
+                v4 qz=vfnma(tvy,e1x, vmul(tvx,e1y));
+                v4 vv=vmul(vfma(ddz,qz, vfma(ddy,qy, vmul(ddx,qx))), invd);
+                v4 tt=vmul(vfma(e2z,qz, vfma(e2y,qy, vmul(e2x,qx))), invd);
+                v4 ok=vgt(vabs(det), S(1e-9f));
+                ok=vand(ok, vge(u,S(0.f)));  ok=vand(ok, vle(u,S(1.f)));
+                ok=vand(ok, vge(vv,S(0.f))); ok=vand(ok, vle(vadd(u,vv),S(1.f)));
+                ok=vand(ok, vgt(tt,S(1e-3f))); ok=vand(ok, vlt(tt,S(tmax)));
+                ok=vand(ok, live);
+                res=vor(res,ok); live=vandn(live,ok);
+                if (!any(live)) return res;
+            }
+        } else { st[sp++]=NLEFT[node]; st[sp++]=NLEFT[node]+1; }
+    }
+    return res;
+}
+
 // ---------- frame ----------
 void renderMesh(float az, float el, float dist, int w, int h, unsigned char* fb){
     float lx=0.52f,ly=0.64f,lz=0.46f;
@@ -558,15 +631,49 @@ void renderMesh(float az, float el, float dist, int w, int h, unsigned char* fb)
             v4 tmax=sel(tg, S(1e9f), vlt(tg,S(1e8f)));
             v4 tHitv; int hitId[4];
             traceMeshP(ro, rd, tmax, &tHitv, hitId);
-            // per-lane scalar shading (bit-identical to shade()); handles w%4 tail
             float rdxA[4],rdyA[4],rdzA[4],tgA[4],tHA[4];
             wasm_v128_store(rdxA,rd.x); wasm_v128_store(rdyA,rd.y); wasm_v128_store(rdzA,rd.z);
             wasm_v128_store(tgA,tg);    wasm_v128_store(tHA,tHitv);
+
+            // Per lane: resolve normal + shadow-ray origin, then batch the 4 sun
+            // shadow rays into one packet traversal (they share the sun direction).
+            float NA[4][3]; int enterA[4]; int kindA[4];   // 0 sky, 1 mesh, 2 ground
+            float soxA[4]={0,0,0,0}, soyA[4]={0,0,0,0}, sozA[4]={0,0,0,0};
+            float actA[4]={0,0,0,0};                        // lane needs a shadow test
+            for (int l=0; l<4; l++){
+                if (x+l>=w){ kindA[l]=0; continue; }
+                float rdl[3]={rdxA[l],rdyA[l],rdzA[l]};
+                if (hitId[l]>=0){
+                    kindA[l]=1;
+                    enterA[l]=meshHitNormal(ro,rdl,tHA[l],hitId[l],NA[l]);
+                    float ndl=NA[l][0]*SUN[0]+NA[l][1]*SUN[1]+NA[l][2]*SUN[2];
+                    if (ndl>0.02f){
+                        float tH=tHA[l];
+                        soxA[l]=ro[0]+rdl[0]*tH+NA[l][0]*0.006f;
+                        soyA[l]=ro[1]+rdl[1]*tH+NA[l][1]*0.006f;
+                        sozA[l]=ro[2]+rdl[2]*tH+NA[l][2]*0.006f;
+                        actA[l]=1.f;
+                    }
+                } else if (tgA[l]<1e8f){
+                    kindA[l]=2;
+                    soxA[l]=ro[0]+rdl[0]*tgA[l]; soyA[l]=0.012f; sozA[l]=ro[2]+rdl[2]*tgA[l];
+                    actA[l]=1.f;
+                } else kindA[l]=0;
+            }
+            v4 active=vgt(wasm_v128_load(actA), S(0.f));
+            v4 occ=occludedP(wasm_v128_load(soxA),wasm_v128_load(soyA),wasm_v128_load(sozA),
+                             active, 20.f);
+            int occA[4]; wasm_v128_store(occA, occ);   // -1 (all ones) where occluded
+
             for (int l=0; l<4 && x+l<w; l++){
                 float rdl[3]={rdxA[l],rdyA[l],rdzA[l]}, c[3];
-                if (hitId[l]>=0)        shadeMeshHit(ro, rdl, tHA[l], hitId[l], 0, c);
-                else if (tgA[l]<1e8f)   shadeGround(ro, rdl, tgA[l], 0, c);
-                else                    skyCols(rdl, 1, c);
+                if (kindA[l]==1){
+                    float sh = (actA[l]!=0.f && occA[l]) ? 0.25f : 1.f;
+                    shadeMeshHit(ro, rdl, tHA[l], hitId[l], 0, NA[l], enterA[l], sh, c);
+                } else if (kindA[l]==2){
+                    float sh = occA[l] ? 0.3f : 1.f;
+                    shadeGround(ro, rdl, tgA[l], 0, sh, c);
+                } else skyCols(rdl, 1, c);
                 unsigned char *px=row+(unsigned)(x+l)*4u;
                 px[0]=(unsigned)(fsqrt(fclampf(c[0],0.f,1.f))*255.f);
                 px[1]=(unsigned)(fsqrt(fclampf(c[1],0.f,1.f))*255.f);
