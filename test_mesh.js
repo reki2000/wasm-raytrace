@@ -11,12 +11,13 @@ const SPACING = 3.4;
 function packAll(e){
   const built = MODELS.map(n => GLB.buildModel(GLB.parseGLB(fs.readFileSync(`models/${n}.glb`).buffer)));
   let vb=0, tb=0, jb=0;
-  const pos=[], jnt=[], wgt=[], idx=[], col=[], tmdl=[];
+  const pos=[], nrm=[], jnt=[], wgt=[], idx=[], col=[], tmdl=[];
   built.forEach((m,i)=>{
     m.vbase=vb; m.jbase=jb; m.slotX=(i-(MODELS.length-1)/2)*SPACING;
     m.fit[12]+=m.slotX;                          // shift the model into its slot
     for (let v=0; v<m.nverts; v++){
       pos.push(m.pos[v*3],m.pos[v*3+1],m.pos[v*3+2]);
+      nrm.push(m.nrm[v*3],m.nrm[v*3+1],m.nrm[v*3+2]);
       jnt.push(m.jnt[v*4]+jb,m.jnt[v*4+1]+jb,m.jnt[v*4+2]+jb,m.jnt[v*4+3]+jb);
       wgt.push(m.wgt[v*4],m.wgt[v*4+1],m.wgt[v*4+2],m.wgt[v*4+3]);
     }
@@ -28,6 +29,7 @@ function packAll(e){
     vb+=m.nverts; tb+=m.ntris; jb+=m.nj;
   });
   new Float32Array(e.memory.buffer,e.meshPos(),pos.length).set(pos);
+  new Float32Array(e.memory.buffer,e.meshNormal(),nrm.length).set(nrm);
   new Int32Array(e.memory.buffer,e.meshJoint(),jnt.length).set(jnt);
   new Float32Array(e.memory.buffer,e.meshWeight(),wgt.length).set(wgt);
   new Int32Array(e.memory.buffer,e.meshIndex(),idx.length).set(idx);

@@ -18,6 +18,7 @@ unsigned char* fbptr(void){ return FB; }
 
 // ---- mesh path (Quaternius glTF dinosaurs) ----
 __attribute__((export_name("meshPos")))    float* e_meshPos(void){ return meshPos(); }
+__attribute__((export_name("meshNormal"))) float* e_meshNormal(void){ return meshNormal(); }
 __attribute__((export_name("meshJoint")))  int*   e_meshJoint(void){ return meshJoint(); }
 __attribute__((export_name("meshWeight"))) float* e_meshWeight(void){ return meshWeight(); }
 __attribute__((export_name("meshIndex")))  int*   e_meshIndex(void){ return meshIndex(); }

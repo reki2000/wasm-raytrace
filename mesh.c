@@ -4,12 +4,16 @@
 // Environment (sky, checker ground, fog, gamma 2.0) and the per-model materials
 // mirror render.c so switching between the SDF herd and the mesh line-up is
 // seamless. Normals are per-face (flat shading suits the low-poly models),
-// except in texture mode, which interpolates per-vertex normals (Gouraud).
+// except in texture mode, which interpolates the GLB's authored per-vertex
+// normals (Gouraud) — each triangle corner is its own vertex record in this
+// format (no shared indices across faces), so the source NORMAL attribute,
+// not the index buffer, is what carries the model's smoothing groups.
 #include "vec.h"
 #include "mesh.h"
 
 // ---------- upload buffers ----------
 static float RPOS[MAXV*3];   // rest positions
+static float RNRM[MAXV*3];   // rest normals (from the GLB's NORMAL attribute)
 static int   JIDX[MAXV*4];   // joint indices (global)
 static float JW[MAXV*4];     // joint weights
 static int   IDX[MAXT*3];    // triangle indices (global)
@@ -19,6 +23,7 @@ static float BONE[MAXJ*12];  // per-frame skin matrices (3x4 row-major)
 static int   NV = 0, NT = 0, NJ = 0;
 
 float* meshPos(void){ return RPOS; }
+float* meshNormal(void){ return RNRM; }
 int*   meshJoint(void){ return JIDX; }
 float* meshWeight(void){ return JW; }
 int*   meshIndex(void){ return IDX; }
@@ -49,14 +54,16 @@ void meshMat(int i, int mode, float refl, float tran, float ior, float tex, floa
 
 // ---------- skinned vertex store ----------
 static float SV[MAXV*3];
-static float VN[MAXV*3];   // per-vertex smooth normals (texture-mode Gouraud shading)
+static float SN[MAXV*3];   // skinned per-vertex normals (texture-mode Gouraud shading)
 
 static void skin(void){
     for (int v=0; v<NV; v++){
         const float *p = RPOS + v*3;
+        const float *rn = RNRM + v*3;
         const int   *j = JIDX + v*4;
         const float *w = JW   + v*4;
         float ox=0.f, oy=0.f, oz=0.f;
+        float nx=0.f, ny=0.f, nz=0.f;
         for (int k=0;k<4;k++){
             float wk = w[k];
             if (wk==0.f) continue;
@@ -64,30 +71,14 @@ static void skin(void){
             ox += wk*(b[0]*p[0]+b[1]*p[1]+b[2]*p[2]+b[3]);
             oy += wk*(b[4]*p[0]+b[5]*p[1]+b[6]*p[2]+b[7]);
             oz += wk*(b[8]*p[0]+b[9]*p[1]+b[10]*p[2]+b[11]);
+            nx += wk*(b[0]*rn[0]+b[1]*rn[1]+b[2]*rn[2]);
+            ny += wk*(b[4]*rn[0]+b[5]*rn[1]+b[6]*rn[2]);
+            nz += wk*(b[8]*rn[0]+b[9]*rn[1]+b[10]*rn[2]);
         }
         SV[v*3]=ox; SV[v*3+1]=oy; SV[v*3+2]=oz;
-    }
-}
-
-// per-vertex normals, area-weighted average of adjacent face normals over the
-// current (skinned) pose — feeds Gouraud shading for texture-mode materials
-static void computeVertexNormals(void){
-    for (int i=0;i<NV*3;i++) VN[i]=0.f;
-    for (int t=0;t<NT;t++){
-        const int *id = IDX+t*3;
-        const float *v0=SV+id[0]*3,*v1=SV+id[1]*3,*v2=SV+id[2]*3;
-        float ax=v1[0]-v0[0],ay=v1[1]-v0[1],az=v1[2]-v0[2];
-        float bx=v2[0]-v0[0],by=v2[1]-v0[1],bz=v2[2]-v0[2];
-        float nx=ay*bz-az*by, ny=az*bx-ax*bz, nz=ax*by-ay*bx;
-        for (int k=0;k<3;k++){
-            float *vn = VN+id[k]*3;
-            vn[0]+=nx; vn[1]+=ny; vn[2]+=nz;
-        }
-    }
-    for (int v=0;v<NV;v++){
-        float *vn = VN+v*3;
-        float l2 = vn[0]*vn[0]+vn[1]*vn[1]+vn[2]*vn[2];
-        if (l2>1e-20f){ float il=1.f/fsqrt(l2); vn[0]*=il; vn[1]*=il; vn[2]*=il; }
+        float nl2 = nx*nx+ny*ny+nz*nz;
+        if (nl2>1e-20f){ float il=1.f/fsqrt(nl2); nx*=il; ny*=il; nz*=il; }
+        SN[v*3]=nx; SN[v*3+1]=ny; SN[v*3+2]=nz;
     }
 }
 
@@ -283,7 +274,7 @@ static void shadeMeshHit(const float*ro,const float*rd,float tH,int tri,int dept
         float d20=vpx*ax+vpy*ay+vpz*az, d21=vpx*bx+vpy*by+vpz*bz;
         float den=d00*d11-d01*d01, invd=den!=0.f?1.f/den:0.f;
         float bv=(d11*d20-d01*d21)*invd, bw=(d00*d21-d01*d20)*invd, bu=1.f-bv-bw;
-        const float *n0=VN+id[0]*3,*n1=VN+id[1]*3,*n2=VN+id[2]*3;
+        const float *n0=SN+id[0]*3,*n1=SN+id[1]*3,*n2=SN+id[2]*3;
         float sx=bu*n0[0]+bv*n1[0]+bw*n2[0];
         float sy=bu*n0[1]+bv*n1[1]+bw*n2[1];
         float sz=bu*n0[2]+bv*n1[2]+bw*n2[2];
@@ -396,9 +387,6 @@ void renderMesh(float az, float el, float dist, int w, int h, unsigned char* fb)
     SUN[0]=lx*il; SUN[1]=ly*il; SUN[2]=lz*il;
 
     skin();
-    int anyTex=0;
-    for (int i=0;i<NMESH;i++) if (M_MODE[i]==1) anyTex=1;
-    if (anyTex) computeVertexNormals();
     buildBVH();
 
     const float tx=FOCX, ty=0.85f, tz=FOCZ;

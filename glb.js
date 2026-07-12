@@ -74,15 +74,20 @@
     const ibmA = readAccessor(g, bin, skin.inverseBindMatrices).data; // NJ*16
     const nj = joints.length;
 
-    const pos = [], jnt = [], wgt = [], idx = [], col = [];
+    const pos = [], nrm = [], jnt = [], wgt = [], idx = [], col = [];
     let vbase = 0;
     for (const prim of mesh.primitives) {
       const P = readAccessor(g, bin, prim.attributes.POSITION);
       const J = readAccessor(g, bin, prim.attributes.JOINTS_0);
       const W = readAccessor(g, bin, prim.attributes.WEIGHTS_0);
+      const N = prim.attributes.NORMAL!=null ? readAccessor(g, bin, prim.attributes.NORMAL) : null;
       const n = P.count;
       for (let i=0;i<n;i++){
         pos.push(P.data[i*3], P.data[i*3+1], P.data[i*3+2]);
+        // each triangle corner is its own vertex record in this format (no
+        // shared indices across faces), so the per-corner NORMAL is what
+        // actually carries the model's authored smoothing groups
+        nrm.push(N ? N.data[i*3] : 0, N ? N.data[i*3+1] : 1, N ? N.data[i*3+2] : 0);
         jnt.push(J.data[i*4], J.data[i*4+1], J.data[i*4+2], J.data[i*4+3]);
         // renormalize weights (guards against slight de-normalization)
         let w0=W.data[i*4],w1=W.data[i*4+1],w2=W.data[i*4+2],w3=W.data[i*4+3];
@@ -134,7 +139,7 @@
     });
 
     const model = {
-      pos, jnt, wgt, idx, col, nj,
+      pos, nrm, jnt, wgt, idx, col, nj,
       nverts: pos.length/3, ntris: idx.length/3,
       ibm: ibmA, joints, nodes, parent, order,
       fit: new Float64Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]),
