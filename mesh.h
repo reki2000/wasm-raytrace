@@ -15,6 +15,7 @@
 
 // upload buffers (JS writes into wasm memory through these pointers)
 float* meshPos(void);      // rest positions        [MAXV*3]
+float* meshNormal(void);   // rest normals (GLB NORMAL attribute) [MAXV*3]
 int*   meshJoint(void);    // 4 joint indices/vert  [MAXV*4]  (global, joint-base added)
 float* meshWeight(void);   // 4 skin weights/vert   [MAXV*4]
 int*   meshIndex(void);    // triangle vertex ids   [MAXT*3]  (global, vert-base added)

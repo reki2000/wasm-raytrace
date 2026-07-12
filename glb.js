@@ -74,15 +74,20 @@
     const ibmA = readAccessor(g, bin, skin.inverseBindMatrices).data; // NJ*16
     const nj = joints.length;
 
-    const pos = [], jnt = [], wgt = [], idx = [], col = [];
+    const pos = [], nrm = [], jnt = [], wgt = [], idx = [], col = [];
     let vbase = 0;
     for (const prim of mesh.primitives) {
       const P = readAccessor(g, bin, prim.attributes.POSITION);
       const J = readAccessor(g, bin, prim.attributes.JOINTS_0);
       const W = readAccessor(g, bin, prim.attributes.WEIGHTS_0);
+      const N = prim.attributes.NORMAL!=null ? readAccessor(g, bin, prim.attributes.NORMAL) : null;
       const n = P.count;
       for (let i=0;i<n;i++){
         pos.push(P.data[i*3], P.data[i*3+1], P.data[i*3+2]);
+        // each triangle corner is its own vertex record in this format (no
+        // shared indices across faces), so the per-corner NORMAL is what
+        // actually carries the model's authored smoothing groups
+        nrm.push(N ? N.data[i*3] : 0, N ? N.data[i*3+1] : 1, N ? N.data[i*3+2] : 0);
         jnt.push(J.data[i*4], J.data[i*4+1], J.data[i*4+2], J.data[i*4+3]);
         // renormalize weights (guards against slight de-normalization)
         let w0=W.data[i*4],w1=W.data[i*4+1],w2=W.data[i*4+2],w3=W.data[i*4+3];
@@ -93,7 +98,9 @@
       if (prim.material!=null){
         const m=g.materials[prim.material];
         const bcf=m.pbrMetallicRoughness&&m.pbrMetallicRoughness.baseColorFactor;
-        if (bcf) c=[bcf[0],bcf[1],bcf[2]];
+        // this pack's baseColorFactor values run very dark (baked from a dim
+        // texture atlas); lift them toward the asset's natural on-screen brightness
+        if (bcf) c=[bcf[0],bcf[1],bcf[2]].map(v=>Math.pow(Math.max(v,0),0.6));
       }
       const I = readAccessor(g, bin, prim.indices).data;
       for (let i=0;i<I.length;i+=3){
@@ -101,6 +108,30 @@
         col.push(c[0],c[1],c[2]);
       }
       vbase += n;
+    }
+
+    // Weld by position: this format never shares an index across triangles
+    // (every face corner is its own vertex record), so average the authored
+    // normal over every corner at the same position -- including the ones the
+    // artist meant as a hard crease -- for a fully rounded, seam-free Gouraud
+    // look instead of preserving the model's original faceting.
+    {
+      const groups = new Map();
+      const nv = pos.length/3;
+      for (let i=0;i<nv;i++){
+        const key = pos[i*3]+','+pos[i*3+1]+','+pos[i*3+2];
+        let g = groups.get(key); if (!g){ g=[]; groups.set(key,g); }
+        g.push(i);
+      }
+      for (const idxs of groups.values()){
+        if (idxs.length<2) continue;
+        let sx=0,sy=0,sz=0;
+        for (const i of idxs){ sx+=nrm[i*3]; sy+=nrm[i*3+1]; sz+=nrm[i*3+2]; }
+        const l = Math.hypot(sx,sy,sz);
+        if (l<1e-8) continue;
+        sx/=l; sy/=l; sz/=l;
+        for (const i of idxs){ nrm[i*3]=sx; nrm[i*3+1]=sy; nrm[i*3+2]=sz; }
+      }
     }
 
     // node rest TRS + hierarchy
@@ -132,7 +163,7 @@
     });
 
     const model = {
-      pos, jnt, wgt, idx, col, nj,
+      pos, nrm, jnt, wgt, idx, col, nj,
       nverts: pos.length/3, ntris: idx.length/3,
       ibm: ibmA, joints, nodes, parent, order,
       fit: new Float64Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]),

@@ -3,12 +3,17 @@
 // scalar-raytraced (primary + sun shadow + floor mirror + acrylic see-through).
 // Environment (sky, checker ground, fog, gamma 2.0) and the per-model materials
 // mirror render.c so switching between the SDF herd and the mesh line-up is
-// seamless. Normals are per-face (flat shading suits the low-poly models).
+// seamless. Normals are per-face (flat shading suits the low-poly models),
+// except in texture mode, which interpolates the GLB's authored per-vertex
+// normals (Gouraud) — each triangle corner is its own vertex record in this
+// format (no shared indices across faces), so the source NORMAL attribute,
+// not the index buffer, is what carries the model's smoothing groups.
 #include "vec.h"
 #include "mesh.h"
 
 // ---------- upload buffers ----------
 static float RPOS[MAXV*3];   // rest positions
+static float RNRM[MAXV*3];   // rest normals (from the GLB's NORMAL attribute)
 static int   JIDX[MAXV*4];   // joint indices (global)
 static float JW[MAXV*4];     // joint weights
 static int   IDX[MAXT*3];    // triangle indices (global)
@@ -18,6 +23,7 @@ static float BONE[MAXJ*12];  // per-frame skin matrices (3x4 row-major)
 static int   NV = 0, NT = 0, NJ = 0;
 
 float* meshPos(void){ return RPOS; }
+float* meshNormal(void){ return RNRM; }
 int*   meshJoint(void){ return JIDX; }
 float* meshWeight(void){ return JW; }
 int*   meshIndex(void){ return IDX; }
@@ -48,13 +54,16 @@ void meshMat(int i, int mode, float refl, float tran, float ior, float tex, floa
 
 // ---------- skinned vertex store ----------
 static float SV[MAXV*3];
+static float SN[MAXV*3];   // skinned per-vertex normals (texture-mode Gouraud shading)
 
 static void skin(void){
     for (int v=0; v<NV; v++){
         const float *p = RPOS + v*3;
+        const float *rn = RNRM + v*3;
         const int   *j = JIDX + v*4;
         const float *w = JW   + v*4;
         float ox=0.f, oy=0.f, oz=0.f;
+        float nx=0.f, ny=0.f, nz=0.f;
         for (int k=0;k<4;k++){
             float wk = w[k];
             if (wk==0.f) continue;
@@ -62,8 +71,14 @@ static void skin(void){
             ox += wk*(b[0]*p[0]+b[1]*p[1]+b[2]*p[2]+b[3]);
             oy += wk*(b[4]*p[0]+b[5]*p[1]+b[6]*p[2]+b[7]);
             oz += wk*(b[8]*p[0]+b[9]*p[1]+b[10]*p[2]+b[11]);
+            nx += wk*(b[0]*rn[0]+b[1]*rn[1]+b[2]*rn[2]);
+            ny += wk*(b[4]*rn[0]+b[5]*rn[1]+b[6]*rn[2]);
+            nz += wk*(b[8]*rn[0]+b[9]*rn[1]+b[10]*rn[2]);
         }
         SV[v*3]=ox; SV[v*3+1]=oy; SV[v*3+2]=oz;
+        float nl2 = nx*nx+ny*ny+nz*nz;
+        if (nl2>1e-20f){ float il=1.f/fsqrt(nl2); nx*=il; ny*=il; nz*=il; }
+        SN[v*3]=nx; SN[v*3+1]=ny; SN[v*3+2]=nz;
     }
 }
 
@@ -252,6 +267,21 @@ static void shadeMeshHit(const float*ro,const float*rd,float tH,int tri,int dept
     float nx=ay*bz-az*by, ny=az*bx-ax*bz, nz=ax*by-ay*bx;
     float nl=1.f/fsqrt(nx*nx+ny*ny+nz*nz); nx*=nl; ny*=nl; nz*=nl;
     if (nx*rd[0]+ny*rd[1]+nz*rd[2]>0.f){ nx=-nx; ny=-ny; nz=-nz; }
+
+    if (mode==1){                    // texture: Gouraud — interpolate vertex normals
+        float vpx=P[0]-v0[0], vpy=P[1]-v0[1], vpz=P[2]-v0[2];
+        float d00=ax*ax+ay*ay+az*az, d01=ax*bx+ay*by+az*bz, d11=bx*bx+by*by+bz*bz;
+        float d20=vpx*ax+vpy*ay+vpz*az, d21=vpx*bx+vpy*by+vpz*bz;
+        float den=d00*d11-d01*d01, invd=den!=0.f?1.f/den:0.f;
+        float bv=(d11*d20-d01*d21)*invd, bw=(d00*d21-d01*d20)*invd, bu=1.f-bv-bw;
+        const float *n0=SN+id[0]*3,*n1=SN+id[1]*3,*n2=SN+id[2]*3;
+        float sx=bu*n0[0]+bv*n1[0]+bw*n2[0];
+        float sy=bu*n0[1]+bv*n1[1]+bw*n2[1];
+        float sz=bu*n0[2]+bv*n1[2]+bw*n2[2];
+        float sl=1.f/fsqrt(sx*sx+sy*sy+sz*sz+1e-20f); sx*=sl; sy*=sl; sz*=sl;
+        if (sx*rd[0]+sy*rd[1]+sz*rd[2]>0.f){ sx=-sx; sy=-sy; sz=-sz; }
+        nx=sx; ny=sy; nz=sz;
+    }
 
     // color straight from the GLB material (baseColorFactor); no invented pattern
     float alr=COL[tri*3], alg=COL[tri*3+1], alb=COL[tri*3+2];
