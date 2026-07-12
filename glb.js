@@ -93,7 +93,9 @@
       if (prim.material!=null){
         const m=g.materials[prim.material];
         const bcf=m.pbrMetallicRoughness&&m.pbrMetallicRoughness.baseColorFactor;
-        if (bcf) c=[bcf[0],bcf[1],bcf[2]];
+        // this pack's baseColorFactor values run very dark (baked from a dim
+        // texture atlas); lift them toward the asset's natural on-screen brightness
+        if (bcf) c=[bcf[0],bcf[1],bcf[2]].map(v=>Math.pow(Math.max(v,0),0.6));
       }
       const I = readAccessor(g, bin, prim.indices).data;
       for (let i=0;i<I.length;i+=3){

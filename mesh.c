@@ -3,7 +3,8 @@
 // scalar-raytraced (primary + sun shadow + floor mirror + acrylic see-through).
 // Environment (sky, checker ground, fog, gamma 2.0) and the per-model materials
 // mirror render.c so switching between the SDF herd and the mesh line-up is
-// seamless. Normals are per-face (flat shading suits the low-poly models).
+// seamless. Normals are per-face (flat shading suits the low-poly models),
+// except in texture mode, which interpolates per-vertex normals (Gouraud).
 #include "vec.h"
 #include "mesh.h"
 
@@ -48,6 +49,7 @@ void meshMat(int i, int mode, float refl, float tran, float ior, float tex, floa
 
 // ---------- skinned vertex store ----------
 static float SV[MAXV*3];
+static float VN[MAXV*3];   // per-vertex smooth normals (texture-mode Gouraud shading)
 
 static void skin(void){
     for (int v=0; v<NV; v++){
@@ -64,6 +66,28 @@ static void skin(void){
             oz += wk*(b[8]*p[0]+b[9]*p[1]+b[10]*p[2]+b[11]);
         }
         SV[v*3]=ox; SV[v*3+1]=oy; SV[v*3+2]=oz;
+    }
+}
+
+// per-vertex normals, area-weighted average of adjacent face normals over the
+// current (skinned) pose — feeds Gouraud shading for texture-mode materials
+static void computeVertexNormals(void){
+    for (int i=0;i<NV*3;i++) VN[i]=0.f;
+    for (int t=0;t<NT;t++){
+        const int *id = IDX+t*3;
+        const float *v0=SV+id[0]*3,*v1=SV+id[1]*3,*v2=SV+id[2]*3;
+        float ax=v1[0]-v0[0],ay=v1[1]-v0[1],az=v1[2]-v0[2];
+        float bx=v2[0]-v0[0],by=v2[1]-v0[1],bz=v2[2]-v0[2];
+        float nx=ay*bz-az*by, ny=az*bx-ax*bz, nz=ax*by-ay*bx;
+        for (int k=0;k<3;k++){
+            float *vn = VN+id[k]*3;
+            vn[0]+=nx; vn[1]+=ny; vn[2]+=nz;
+        }
+    }
+    for (int v=0;v<NV;v++){
+        float *vn = VN+v*3;
+        float l2 = vn[0]*vn[0]+vn[1]*vn[1]+vn[2]*vn[2];
+        if (l2>1e-20f){ float il=1.f/fsqrt(l2); vn[0]*=il; vn[1]*=il; vn[2]*=il; }
     }
 }
 
@@ -253,6 +277,21 @@ static void shadeMeshHit(const float*ro,const float*rd,float tH,int tri,int dept
     float nl=1.f/fsqrt(nx*nx+ny*ny+nz*nz); nx*=nl; ny*=nl; nz*=nl;
     if (nx*rd[0]+ny*rd[1]+nz*rd[2]>0.f){ nx=-nx; ny=-ny; nz=-nz; }
 
+    if (mode==1){                    // texture: Gouraud — interpolate vertex normals
+        float vpx=P[0]-v0[0], vpy=P[1]-v0[1], vpz=P[2]-v0[2];
+        float d00=ax*ax+ay*ay+az*az, d01=ax*bx+ay*by+az*bz, d11=bx*bx+by*by+bz*bz;
+        float d20=vpx*ax+vpy*ay+vpz*az, d21=vpx*bx+vpy*by+vpz*bz;
+        float den=d00*d11-d01*d01, invd=den!=0.f?1.f/den:0.f;
+        float bv=(d11*d20-d01*d21)*invd, bw=(d00*d21-d01*d20)*invd, bu=1.f-bv-bw;
+        const float *n0=VN+id[0]*3,*n1=VN+id[1]*3,*n2=VN+id[2]*3;
+        float sx=bu*n0[0]+bv*n1[0]+bw*n2[0];
+        float sy=bu*n0[1]+bv*n1[1]+bw*n2[1];
+        float sz=bu*n0[2]+bv*n1[2]+bw*n2[2];
+        float sl=1.f/fsqrt(sx*sx+sy*sy+sz*sz+1e-20f); sx*=sl; sy*=sl; sz*=sl;
+        if (sx*rd[0]+sy*rd[1]+sz*rd[2]>0.f){ sx=-sx; sy=-sy; sz=-sz; }
+        nx=sx; ny=sy; nz=sz;
+    }
+
     // color straight from the GLB material (baseColorFactor); no invented pattern
     float alr=COL[tri*3], alg=COL[tri*3+1], alb=COL[tri*3+2];
 
@@ -357,6 +396,9 @@ void renderMesh(float az, float el, float dist, int w, int h, unsigned char* fb)
     SUN[0]=lx*il; SUN[1]=ly*il; SUN[2]=lz*il;
 
     skin();
+    int anyTex=0;
+    for (int i=0;i<NMESH;i++) if (M_MODE[i]==1) anyTex=1;
+    if (anyTex) computeVertexNormals();
     buildBVH();
 
     const float tx=FOCX, ty=0.85f, tz=FOCZ;
