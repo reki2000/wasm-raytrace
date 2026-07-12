@@ -59,8 +59,8 @@ function dump(e,name,W,H){
               built.reduce((a,m)=>a+m.ntris,0), 'verts', built.reduce((a,m)=>a+m.nverts,0));
   pushBones(e,built,0.6);
   // materials: give T-Rex metal, Stego acrylic, others plain/texture
-  e.meshMat(0,2,0.85,0.65,1.49,0.0,0.9);   // T-Rex metallic
-  e.meshMat(3,3,0.35,0.85,1.49,0.0,0.6);   // Stego acrylic
+  e.meshMat(0,2,0.85,0.65,1.49,0.0,0.9,1); // T-Rex metallic, welded normals
+  e.meshMat(3,3,0.35,0.85,1.49,0.0,0.6,0); // Stego acrylic, flat per-face normals
   // wide shot from far to see the row
   e.meshSetFocus(0,0);
   e.renderMesh(0.95,0.33,14.0,W,H); dump(e,'row_all',W,H);

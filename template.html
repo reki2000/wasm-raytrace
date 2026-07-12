@@ -250,7 +250,7 @@ let built = null;         // array of GLB.buildModel results (packed)
 let boneAll = null;       // Float32Array over e.meshBone()
 let meshLoaded = false, loadPromise = null;
 
-const meshState = MESH_MODELS.map(() => ({ mode:0, tex:1, refl:0.5, gloss:0.5, tran:0.65, ior:1.49 }));
+const meshState = MESH_MODELS.map(() => ({ mode:0, tex:1, refl:0.5, gloss:0.5, tran:0.65, ior:1.49, smooth:true }));
 const meshAction = MESH_MODELS.map(() => 0);   // per-model anim index (set to Idle on load)
 const meshTravel = MESH_MODELS.map(() => 0);   // forward ground distance along +Z
 const meshAutoRun = MESH_MODELS.map(() => false); // auto-running to rejoin the herd?
@@ -325,6 +325,9 @@ function buildMeshCard(){
     b.onclick=()=>{ meshState[focusIndex].mode=mv; refreshMeshCard(); pushMeshMat(focusIndex); };
     modes.appendChild(b); modeBtns.push(b);
   });
+  const smoothBtn=document.createElement('button'); smoothBtn.type='button'; smoothBtn.className='pick';
+  smoothBtn.style.width='100%'; smoothBtn.style.marginBottom='9px'; smoothBtn.textContent='法線溶接';
+  smoothBtn.onclick=()=>{ meshState[focusIndex].smooth=!meshState[focusIndex].smooth; refreshMeshCard(); pushMeshMat(focusIndex); };
   const sliders = document.createElement('div'); sliders.className='sliders';
   const slEls = {};
   for (const key in PARAMS){
@@ -337,8 +340,8 @@ function buildMeshCard(){
     r.addEventListener('input',()=>{ meshState[focusIndex][key]=+r.value; val.textContent=(+r.value).toFixed(2); pushMeshMat(focusIndex); });
     w.append(r,val,lab); sliders.appendChild(w); slEls[key]={r,val,w};
   }
-  card.append(nm,modes,sliders); $meshwrap.appendChild(card);
-  meshCard = {title,chip:ch,modeBtns,slEls};
+  card.append(nm,modes,smoothBtn,sliders); $meshwrap.appendChild(card);
+  meshCard = {title,chip:ch,modeBtns,smoothBtn,slEls};
 }
 function refreshMeshCard(){
   if(!meshCard) return;
@@ -346,6 +349,7 @@ function refreshMeshCard(){
   meshCard.title.textContent=MESH_MODELS[focusIndex].toUpperCase();
   meshCard.chip.style.background=MESH_COLORS[focusIndex];
   meshCard.modeBtns.forEach((b,j)=>b.classList.toggle('on', j===s.mode));
+  meshCard.smoothBtn.classList.toggle('on', s.smooth);
   const show=MODE_PARAMS[s.mode];
   for(const key in meshCard.slEls){
     const el=meshCard.slEls[key];
@@ -355,7 +359,7 @@ function refreshMeshCard(){
 }
 function pushMeshMat(i){
   const s=meshState[i]; const tex = s.mode===1 ? s.tex : 0;
-  e.meshMat(i, s.mode, s.refl, s.tran, s.ior, tex, s.gloss);
+  e.meshMat(i, s.mode, s.refl, s.tran, s.ior, tex, s.gloss, s.smooth?1:0);
 }
 buildMeshCard();
 
