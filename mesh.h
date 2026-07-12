@@ -26,9 +26,11 @@ float* meshBone(void);     // per-frame skin mats   [MAXJ*12] (3x4 row-major, fi
 void meshSetCounts(int nv, int nt, int nj);
 void meshSetFocus(float x, float z);   // camera orbit target (selected dino)
 
-// per-model surface material (same semantics as render.c setMaterial)
+// per-model surface material (same semantics as render.c setMaterial, plus
+// a normal-welding toggle that applies to any mode)
 // mode: 0 plain | 1 textured | 2 metallic | 3 acrylic
-void meshMat(int i, int mode, float refl, float tran, float ior, float tex, float gloss);
+// smooth: 0 flat per-face normals | nonzero welded (Gouraud) vertex normals
+void meshMat(int i, int mode, float refl, float tran, float ior, float tex, float gloss, int smooth);
 
 // skin -> build BVH -> raytrace the line-up into fb (RGBA8, w*h)
 void renderMesh(float az, float el, float dist, int w, int h, unsigned char* fb);

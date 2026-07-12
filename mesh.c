@@ -3,11 +3,12 @@
 // scalar-raytraced (primary + sun shadow + floor mirror + acrylic see-through).
 // Environment (sky, checker ground, fog, gamma 2.0) and the per-model materials
 // mirror render.c so switching between the SDF herd and the mesh line-up is
-// seamless. Normals are per-face (flat shading suits the low-poly models),
-// except in texture mode, which interpolates the GLB's authored per-vertex
-// normals (Gouraud) — each triangle corner is its own vertex record in this
-// format (no shared indices across faces), so the source NORMAL attribute,
-// not the index buffer, is what carries the model's smoothing groups.
+// seamless. Normals are per-face by default (flat shading suits the low-poly
+// models); each material can opt into interpolating the GLB's authored
+// per-vertex normals instead (Gouraud) — each triangle corner is its own
+// vertex record in this format (no shared indices across faces), so the
+// source NORMAL attribute, not the index buffer, is what carries the
+// model's smoothing groups.
 #include "vec.h"
 #include "mesh.h"
 
@@ -44,12 +45,13 @@ static float M_TRAN[NMESH]  = {0.65f,0.65f,0.65f,0.65f,0.65f,0.65f};
 static float M_IOR[NMESH]   = {1.49f,1.49f,1.49f,1.49f,1.49f,1.49f};
 static float M_TEX[NMESH]   = {1.f,1.f,1.f,1.f,1.f,1.f};
 static float M_GLOSS[NMESH] = {0.5f,0.5f,0.5f,0.5f,0.5f,0.5f};
-void meshMat(int i, int mode, float refl, float tran, float ior, float tex, float gloss){
+static int   M_SMOOTH[NMESH]= {1,1,1,1,1,1};   // welded (Gouraud) vertex normals vs. flat per-face
+void meshMat(int i, int mode, float refl, float tran, float ior, float tex, float gloss, int smooth){
     if (i<0||i>=NMESH) return;
     M_MODE[i]=mode;
     M_REFL[i]=fclampf(refl,0.f,1.f); M_TRAN[i]=fclampf(tran,0.f,1.f);
     M_IOR[i]=fclampf(ior,1.01f,2.5f); M_TEX[i]=fclampf(tex,0.f,1.f);
-    M_GLOSS[i]=fclampf(gloss,0.f,1.f);
+    M_GLOSS[i]=fclampf(gloss,0.f,1.f); M_SMOOTH[i]=smooth!=0;
 }
 
 // ---------- skinned vertex store ----------
@@ -266,9 +268,12 @@ static void shadeMeshHit(const float*ro,const float*rd,float tH,int tri,int dept
     float bx=v2[0]-v0[0],by=v2[1]-v0[1],bz=v2[2]-v0[2];
     float nx=ay*bz-az*by, ny=az*bx-ax*bz, nz=ax*by-ay*bx;
     float nl=1.f/fsqrt(nx*nx+ny*ny+nz*nz); nx*=nl; ny*=nl; nz*=nl;
-    if (nx*rd[0]+ny*rd[1]+nz*rd[2]>0.f){ nx=-nx; ny=-ny; nz=-nz; }
+    // acrylic (mode 3): normal facing the ray -> entering the body (inside);
+    // normal pointing the same way as the ray -> leaving it (outside)
+    int enter = nx*rd[0]+ny*rd[1]+nz*rd[2] <= 0.f;
+    if (!enter){ nx=-nx; ny=-ny; nz=-nz; }
 
-    if (mode==1){                    // texture: Gouraud — interpolate vertex normals
+    if (M_SMOOTH[mdl]){              // welded: Gouraud — interpolate vertex normals
         float vpx=P[0]-v0[0], vpy=P[1]-v0[1], vpz=P[2]-v0[2];
         float d00=ax*ax+ay*ay+az*az, d01=ax*bx+ay*by+az*bz, d11=bx*bx+by*by+bz*bz;
         float d20=vpx*ax+vpy*ay+vpz*az, d21=vpx*bx+vpy*by+vpz*bz;
@@ -324,10 +329,22 @@ static void shadeMeshHit(const float*ro,const float*rd,float tH,int tri,int dept
         if (mode==3){                               // acrylic: see-through behind + fresnel
             float tran=M_TRAN[mdl];
             float bg[3];
+            float dir[3]={rd[0],rd[1],rd[2]};
+            if (enter){                             // entering the body: bend the ray by its IOR
+                float eta=1.f/M_IOR[mdl];
+                float cosi=-(nx*rd[0]+ny*rd[1]+nz*rd[2]);
+                float k=1.f-eta*eta*(1.f-cosi*cosi);
+                if (k>=0.f){
+                    float sk=fsqrt(k), coef=eta*cosi-sk;
+                    dir[0]=eta*rd[0]+coef*nx; dir[1]=eta*rd[1]+coef*ny; dir[2]=eta*rd[2]+coef*nz;
+                    float rl=1.f/fsqrt(dir[0]*dir[0]+dir[1]*dir[1]+dir[2]*dir[2]);
+                    dir[0]*=rl; dir[1]*=rl; dir[2]*=rl;
+                }
+            }                                        // leaving the body: pass straight through
             if (depth<2){
-                float so[3]={P[0]+rd[0]*0.02f,P[1]+rd[1]*0.02f,P[2]+rd[2]*0.02f};
-                shade(so,rd,depth+1,bg);
-            } else skyCols(rd,0,bg);
+                float so[3]={P[0]+dir[0]*0.02f,P[1]+dir[1]*0.02f,P[2]+dir[2]*0.02f};
+                shade(so,dir,depth+1,bg);
+            } else skyCols(dir,0,bg);
             float kt=tran*(1.f-f5*0.5f);
             // thin tint by albedo, so the body keeps a hint of its color
             cr+=(bg[0]*(0.5f+0.5f*alr)-cr)*kt;

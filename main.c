@@ -30,8 +30,8 @@ void e_meshSetCounts(int nv, int nt, int nj){ meshSetCounts(nv, nt, nj); }
 __attribute__((export_name("meshSetFocus")))
 void e_meshSetFocus(float x, float z){ meshSetFocus(x, z); }
 __attribute__((export_name("meshMat")))
-void e_meshMat(int i, int mode, float refl, float tran, float ior, float tex, float gloss){
-    meshMat(i, mode, refl, tran, ior, tex, gloss);
+void e_meshMat(int i, int mode, float refl, float tran, float ior, float tex, float gloss, int smooth){
+    meshMat(i, mode, refl, tran, ior, tex, gloss, smooth);
 }
 
 __attribute__((export_name("renderMesh")))
