@@ -266,7 +266,10 @@ static void shadeMeshHit(const float*ro,const float*rd,float tH,int tri,int dept
     float bx=v2[0]-v0[0],by=v2[1]-v0[1],bz=v2[2]-v0[2];
     float nx=ay*bz-az*by, ny=az*bx-ax*bz, nz=ax*by-ay*bx;
     float nl=1.f/fsqrt(nx*nx+ny*ny+nz*nz); nx*=nl; ny*=nl; nz*=nl;
-    if (nx*rd[0]+ny*rd[1]+nz*rd[2]>0.f){ nx=-nx; ny=-ny; nz=-nz; }
+    // acrylic (mode 3): normal facing the ray -> entering the body (inside);
+    // normal pointing the same way as the ray -> leaving it (outside)
+    int enter = nx*rd[0]+ny*rd[1]+nz*rd[2] <= 0.f;
+    if (!enter){ nx=-nx; ny=-ny; nz=-nz; }
 
     if (mode==1){                    // texture: Gouraud — interpolate vertex normals
         float vpx=P[0]-v0[0], vpy=P[1]-v0[1], vpz=P[2]-v0[2];
@@ -324,10 +327,22 @@ static void shadeMeshHit(const float*ro,const float*rd,float tH,int tri,int dept
         if (mode==3){                               // acrylic: see-through behind + fresnel
             float tran=M_TRAN[mdl];
             float bg[3];
+            float dir[3]={rd[0],rd[1],rd[2]};
+            if (enter){                             // entering the body: bend the ray by its IOR
+                float eta=1.f/M_IOR[mdl];
+                float cosi=-(nx*rd[0]+ny*rd[1]+nz*rd[2]);
+                float k=1.f-eta*eta*(1.f-cosi*cosi);
+                if (k>=0.f){
+                    float sk=fsqrt(k), coef=eta*cosi-sk;
+                    dir[0]=eta*rd[0]+coef*nx; dir[1]=eta*rd[1]+coef*ny; dir[2]=eta*rd[2]+coef*nz;
+                    float rl=1.f/fsqrt(dir[0]*dir[0]+dir[1]*dir[1]+dir[2]*dir[2]);
+                    dir[0]*=rl; dir[1]*=rl; dir[2]*=rl;
+                }
+            }                                        // leaving the body: pass straight through
             if (depth<2){
-                float so[3]={P[0]+rd[0]*0.02f,P[1]+rd[1]*0.02f,P[2]+rd[2]*0.02f};
-                shade(so,rd,depth+1,bg);
-            } else skyCols(rd,0,bg);
+                float so[3]={P[0]+dir[0]*0.02f,P[1]+dir[1]*0.02f,P[2]+dir[2]*0.02f};
+                shade(so,dir,depth+1,bg);
+            } else skyCols(dir,0,bg);
             float kt=tran*(1.f-f5*0.5f);
             // thin tint by albedo, so the body keeps a hint of its color
             cr+=(bg[0]*(0.5f+0.5f*alr)-cr)*kt;
