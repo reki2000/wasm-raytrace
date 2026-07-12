@@ -13,10 +13,10 @@
 | `render.c` / `render.h` | **レンダリングエンジン** — SDF プリミティブストア(`PR[]`, `cone()` / `coneA()` / `boneCone()`)、距離評価(`mapL()` / `mapLE()`)、カリング(`buildList()`)、環境(`skyCol()` / `groundAlbedo()`)、ソフトシャドウ(`softshadow()`)、マテリアル状態(`M_*` / `setMaterial()`)、フレームパイプライン `renderFrame()` |
 | `anim.c` / `anim.h` | **アニメーションエンジン** — アニメーションクロック(`animTick()`, `GT` / `SCROLL`)、ノースリップ歩行 `gaitFoot()`、群れ運動 `kin()` |
 | `dino_model.c` / `dino_model.h` | **恐竜モデルとアニメーションパラメータ** — 3種のジオメトリビルダー(`theropod()` / `stego()` / `trice()`、脚 `tleg()` / `qleg()`)、群れ配置と太陽設定 `animate()`、種別テクスチャ `dinoAlbedo()` |
-| `mesh.c` / `mesh.h` | **メッシュレンダリングエンジン(第2経路)** — Quaternius glTF 恐竜用。アップロードバッファ(`meshPos()` ほか)、LBS スキニング `skin()`、毎フレーム BVH 再構築 `buildBVH()`、スカラー三角形レイトレ(`traceMesh()` / `occluded()`、Möller–Trumbore + スラブ)、環境のスカラー版(`skyCols()` / `groundCols()`)、フレーム `renderMesh()` |
+| `mesh.c` / `mesh.h` | **メッシュレンダリングエンジン(第2経路)** — Quaternius glTF 恐竜用。アップロードバッファ(`meshPos()` ほか)、LBS スキニング `skin()`、BVH(`buildBVH()` を16フレーム毎、間は `refitBVH()` で境界のみ更新)、SoA 三角形ストア `packTris()`、4三角同時 SIMD の三角形レイトレ(`traceMesh()` / `occluded()`、Möller–Trumbore + スラブ)、環境のスカラー版(`skyCols()` / `groundCols()`)、フレーム `renderMesh()` |
 | `glb.js` | **GLB ローダ + glTF スケルタルアニメサンプラ**(Node/ブラウザ共用) — `parseGLB()` / `buildModel()`(プリミティブ平坦化・シーンフィット `computeFit()`)/ `sampleBones()`(キーフレーム補間 → ノード階層 → `逆バインド` → フィット合成 → 3x4 行列) |
 | `main.c` | **統合メイン** — SDF 経路 `render`、メッシュ経路 `renderMesh` と `mesh*` アップロードエクスポート、`fb` / `mat`。`render()` は `animTick()` → `animate()` → `renderFrame()`、`renderMesh()` は `skin()` → `buildBVH()` → 走査 |
-| `vec.h` | 全モジュール共通の SIMD 数学層 — `v4`(f32x4)ラッパ、SoA ベクトル `V3` / `C3`、libm 代替スカラー数学(`fsin` / `fsqrt` など)、2D 値ノイズ `vnoise()` |
+| `vec.h` | 全モジュール共通の SIMD 数学層 — `v4`(f32x4)ラッパ、Relaxed-SIMD FMA(`vfma` / `vfnma`)、SoA ベクトル `V3` / `C3`、libm 代替スカラー数学(`fsin` / `fsqrt` など)、2D 値ノイズ `vnoise()` |
 
 依存方向は `main.c` → 各モジュール。レンダラはシーン固有の表面色だけをフック関数
 `dinoAlbedo()`(`dino_model.h` で宣言)経由で参照します。ホットな評価関数
@@ -38,7 +38,7 @@
 
 | 項目 | 実装箇所 |
 |---|---|
-| コンパイル(wasm32 + SIMD128) | `build.sh`(4つの `.c` を一括コンパイル・リンク) |
+| コンパイル(wasm32 + SIMD128 + Relaxed SIMD) | `build.sh`(`-msimd128 -mrelaxed-simd`、5つの `.c` を一括コンパイル・リンク) |
 | base64 埋め込み | `embed.py`(`template.html` の `__WASM_B64__` を置換) |
 | wasm 初期化・SIMD 非対応検出 | `template.html` 冒頭の instantiate ブロック(`WebAssembly.instantiate` 失敗で `#err` を表示) |
 | エクスポート API | `main.c` — `fb`(フレームバッファ先頭ポインタ、実体は `fbptr()`)/ `render(t, az, el, dist, w, h)` / `mat(i, mode, refl, tran, ior, tex, gloss)`(マテリアル設定、実体は `setMaterial()`)の3つ |
@@ -172,9 +172,12 @@ SDF 経路とは独立した**第2レンダラ**。[Quaternius Animated Dinosaur
   世界行列 → `逆バインド行列` → シーンフィット `computeFit()` を左から合成 → 3x4 行列を該当スライスへ書込。
   **フィットはメッシュ局所座標ではなくスキン後の参照姿勢 AABB から**算出する(スケルトンが大きなスケールを
   持つため。実装時の落とし穴だった)。
-- **wasm(`mesh.c`)** — 連結済みデータを `skin()` が LBS で一括変形 → `buildBVH()` が中点分割 BVH を
-  全三角形(6体計 約9500)で**毎フレーム再構築** → 再帰 `shade()` が最近接ヒットを求め、メッシュ/床/空で
-  分岐。法線は**スキン後の面法線**(フラットシェード)。プライマリ + 太陽シャドウ + **床ミラー**(1バウンス)
+- **wasm(`mesh.c`)** — 連結済みデータを `skin()` が LBS で一括変形 → BVH は**16フレームに1回だけ**中点分割で
+  再構築(`buildBVH()`)し、間のフレームはトポロジ据え置きでノード AABB のみ更新する **`refitBVH()`**(スキン変形は
+  フレーム間で小さいので初期分割が有効なまま) → `packTris()` が **BVH 順の SoA 三角形ストア**を作る → 再帰 `shade()`
+  が最近接ヒットを求め、メッシュ/床/空で分岐。三角形交差はリーフ内を **4三角形同時の SIMD Möller–Trumbore**
+  (`traceMesh()` / `occluded()`、1レイ×4三角をレーン並列、余りはレーンマスクで無効化)で処理する。
+  法線は**スキン後の面法線**(フラットシェード)。プライマリ + 太陽シャドウ + **床ミラー**(1バウンス)
   + **アクリル透過**(背後を再帰トレース)。マテリアルは三角形の `TMDL` で個体別に引く。
 
 エクスポートは `meshPos/meshJoint/meshWeight/meshIndex/meshColor/meshTriModel`(読込時に1回)、`meshBone`
@@ -183,12 +186,14 @@ SDF 経路とは独立した**第2レンダラ**。[Quaternius Animated Dinosaur
 `template.html` のフレームループが `sceneMode` で `render()`(SDF)と `renderMesh()`(メッシュ)を分岐し、
 カメラ中心 `focusXCur` は選択個体のスロット X へ lerp する。
 
-低ポリ(6体計 約9500三角形)なので CPU スカラーでも適応解像度で実用速度。SIMD 4レイパケット化と
-BVH のフレーム間リフィットは今後の最適化余地。
+低ポリ(6体計 約9500三角形)なので適応解像度で実用速度。交差は4三角同時 SIMD 化済み、BVH はフレーム間
+リフィット済み。残る最適化余地はレイパケット化(4レイ同時)とマルチスレッド(Web Worker + `SharedArrayBuffer`、
+要 cross-origin isolation)。
 
 ## 使われている技術まとめ
 
 - **WebAssembly SIMD128** — `<wasm_simd128.h>` の intrinsics を直接使用(f32x4 演算、`bitselect`、`any_true`、`i32x4_trunc_sat` など)
+- **Relaxed SIMD** — `wasm_f32x4_relaxed_madd/nmadd` による FMA(内積・積和を1命令化、SSE/NEON の融合積和へ写像)。非対応ブラウザは instantiate 失敗 → `#err` 表示にフォールバック
 - **フリースタンディング C** — `-nostdlib -Wl,--no-entry`、libc/libm なし。`__builtin_sqrtf` 等 + 自前 sin 近似
 - **Sphere tracing (SDF レイマーチング)** — smooth min、四面体法線、SDF ベースのソフトシャドウ / AO
 - **異方性カプセル SDF** — Lipschitz ≤ 1 を保った軸別スケール(本デモの独自ポイント)

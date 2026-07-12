@@ -96,12 +96,53 @@ static int   NNODE = 0;
 static inline float fmin2(float a,float b){ return a<b?a:b; }
 static inline float fmax2(float a,float b){ return a>b?a:b; }
 
+// SoA triangle store in BVH (TRI) order, for 4-wide SIMD Moller-Trumbore.
+// Padded by 4 so a leaf's tail group can over-read safely (padding = det 0).
+static float PV0X[MAXT+4],PV0Y[MAXT+4],PV0Z[MAXT+4];
+static float PE1X[MAXT+4],PE1Y[MAXT+4],PE1Z[MAXT+4];
+static float PE2X[MAXT+4],PE2Y[MAXT+4],PE2Z[MAXT+4];
+static int   PTRI[MAXT+4];
+static void packTris(void){
+    for (int p=0;p<NT;p++){
+        int t=TRI[p]; const int *id=IDX+t*3;
+        const float *v0=SV+id[0]*3,*v1=SV+id[1]*3,*v2=SV+id[2]*3;
+        PV0X[p]=v0[0]; PV0Y[p]=v0[1]; PV0Z[p]=v0[2];
+        PE1X[p]=v1[0]-v0[0]; PE1Y[p]=v1[1]-v0[1]; PE1Z[p]=v1[2]-v0[2];
+        PE2X[p]=v2[0]-v0[0]; PE2Y[p]=v2[1]-v0[1]; PE2Z[p]=v2[2]-v0[2];
+        PTRI[p]=t;
+    }
+    for (int p=NT;p<NT+4;p++){
+        PV0X[p]=PV0Y[p]=PV0Z[p]=0.f;
+        PE1X[p]=PE1Y[p]=PE1Z[p]=0.f;
+        PE2X[p]=PE2Y[p]=PE2Z[p]=0.f;
+        PTRI[p]=-1;
+    }
+}
+#define LD(a,b) wasm_v128_load((a)+(b))
+
 static void nodeBounds(int start,int count,float*mn,float*mx){
     mn[0]=mn[1]=mn[2]=1e30f; mx[0]=mx[1]=mx[2]=-1e30f;
     for (int i=start;i<start+count;i++){
         const int *id=IDX+TRI[i]*3;
         for (int c=0;c<3;c++){ const float *pv=SV+id[c]*3;
             for (int a=0;a<3;a++){ mn[a]=fmin2(mn[a],pv[a]); mx[a]=fmax2(mx[a],pv[a]); } }
+    }
+}
+// Refit: keep the tree topology + TRI order, just recompute node bounds from the
+// current skinned vertices. Children are always allocated after their parent
+// (l,r = NNODE++ inside the split), so a reverse-index pass finishes children
+// before parents. O(nodes) vs the O(n log n) median-split rebuild.
+static void refitBVH(void){
+    for (int node=NNODE-1; node>=0; node--){
+        if (NLEFT[node]<0){
+            nodeBounds(NSTART[node],NCOUNT[node],NMIN+node*3,NMAX+node*3);
+        } else {
+            int l=NLEFT[node], r=l+1;
+            for (int a=0;a<3;a++){
+                NMIN[node*3+a]=fmin2(NMIN[l*3+a],NMIN[r*3+a]);
+                NMAX[node*3+a]=fmax2(NMAX[l*3+a],NMAX[r*3+a]);
+            }
+        }
     }
 }
 static void buildBVH(void){
@@ -156,27 +197,40 @@ static int traceMesh(const float*ro,const float*rd,float tmax,float*tHit){
     float inv[3]={1.f/rd[0],1.f/rd[1],1.f/rd[2]};
     float best=tmax; int hit=-1;
     if (NNODE==0) return -1;
+    v4 rdx=S(rd[0]),rdy=S(rd[1]),rdz=S(rd[2]);
+    v4 rox=S(ro[0]),roy=S(ro[1]),roz=S(ro[2]);
+    v4 LANE=wasm_f32x4_make(0.f,1.f,2.f,3.f);
     int st[160],sp=0; st[sp++]=0;
     while (sp>0){
         int node=st[--sp]; float tn;
         if (!slab(ro,inv,node,best,&tn)) continue;
         if (NLEFT[node]<0){
             int s=NSTART[node],c=NCOUNT[node];
-            for (int i=s;i<s+c;i++){
-                int t=TRI[i]; const int *id=IDX+t*3;
-                const float *v0=SV+id[0]*3,*v1=SV+id[1]*3,*v2=SV+id[2]*3;
-                float e1x=v1[0]-v0[0],e1y=v1[1]-v0[1],e1z=v1[2]-v0[2];
-                float e2x=v2[0]-v0[0],e2y=v2[1]-v0[1],e2z=v2[2]-v0[2];
-                float px=rd[1]*e2z-rd[2]*e2y,py=rd[2]*e2x-rd[0]*e2z,pz=rd[0]*e2y-rd[1]*e2x;
-                float det=e1x*px+e1y*py+e1z*pz;
-                if (det>-1e-9f&&det<1e-9f) continue;
-                float invd=1.f/det;
-                float tvx=ro[0]-v0[0],tvy=ro[1]-v0[1],tvz=ro[2]-v0[2];
-                float u=(tvx*px+tvy*py+tvz*pz)*invd; if (u<0.f||u>1.f) continue;
-                float qx=tvy*e1z-tvz*e1y,qy=tvz*e1x-tvx*e1z,qz=tvx*e1y-tvy*e1x;
-                float vv=(rd[0]*qx+rd[1]*qy+rd[2]*qz)*invd; if (vv<0.f||u+vv>1.f) continue;
-                float tt=(e2x*qx+e2y*qy+e2z*qz)*invd;
-                if (tt>1e-4f&&tt<best){ best=tt; hit=t; }
+            for (int base=s; base<s+c; base+=4){
+                int m=s+c-base; if (m>4) m=4;
+                v4 e1x=LD(PE1X,base),e1y=LD(PE1Y,base),e1z=LD(PE1Z,base);
+                v4 e2x=LD(PE2X,base),e2y=LD(PE2Y,base),e2z=LD(PE2Z,base);
+                v4 v0x=LD(PV0X,base),v0y=LD(PV0Y,base),v0z=LD(PV0Z,base);
+                v4 px=vfnma(rdz,e2y, vmul(rdy,e2z));   // rd x e2
+                v4 py=vfnma(rdx,e2z, vmul(rdz,e2x));
+                v4 pz=vfnma(rdy,e2x, vmul(rdx,e2y));
+                v4 det=vfma(e1z,pz, vfma(e1y,py, vmul(e1x,px)));
+                v4 invd=vdiv(S(1.f),det);
+                v4 tvx=vsub(rox,v0x),tvy=vsub(roy,v0y),tvz=vsub(roz,v0z);
+                v4 u=vmul(vfma(tvz,pz, vfma(tvy,py, vmul(tvx,px))), invd);
+                v4 qx=vfnma(tvz,e1y, vmul(tvy,e1z));   // tv x e1
+                v4 qy=vfnma(tvx,e1z, vmul(tvz,e1x));
+                v4 qz=vfnma(tvy,e1x, vmul(tvx,e1y));
+                v4 vv=vmul(vfma(rdz,qz, vfma(rdy,qy, vmul(rdx,qx))), invd);
+                v4 tt=vmul(vfma(e2z,qz, vfma(e2y,qy, vmul(e2x,qx))), invd);
+                v4 ok=vgt(vabs(det), S(1e-9f));
+                ok=vand(ok, vge(u,S(0.f)));  ok=vand(ok, vle(u,S(1.f)));
+                ok=vand(ok, vge(vv,S(0.f))); ok=vand(ok, vle(vadd(u,vv),S(1.f)));
+                ok=vand(ok, vgt(tt,S(1e-4f)));
+                ok=vand(ok, vlt(LANE, S((float)m)));
+                tt=sel(tt, S(1e30f), ok);
+                float tv[4]; wasm_v128_store(tv, tt);
+                for (int l=0;l<m;l++) if (tv[l]<best){ best=tv[l]; hit=PTRI[base+l]; }
             }
         } else { st[sp++]=NLEFT[node]; st[sp++]=NLEFT[node]+1; }
     }
@@ -185,27 +239,38 @@ static int traceMesh(const float*ro,const float*rd,float tmax,float*tHit){
 static int occluded(const float*ro,const float*rd,float tmax){
     float inv[3]={1.f/rd[0],1.f/rd[1],1.f/rd[2]};
     if (NNODE==0) return 0;
+    v4 rdx=S(rd[0]),rdy=S(rd[1]),rdz=S(rd[2]);
+    v4 rox=S(ro[0]),roy=S(ro[1]),roz=S(ro[2]);
+    v4 LANE=wasm_f32x4_make(0.f,1.f,2.f,3.f);
     int st[160],sp=0; st[sp++]=0;
     while (sp>0){
         int node=st[--sp]; float tn;
         if (!slab(ro,inv,node,tmax,&tn)) continue;
         if (NLEFT[node]<0){
             int s=NSTART[node],c=NCOUNT[node];
-            for (int i=s;i<s+c;i++){
-                int t=TRI[i]; const int *id=IDX+t*3;
-                const float *v0=SV+id[0]*3,*v1=SV+id[1]*3,*v2=SV+id[2]*3;
-                float e1x=v1[0]-v0[0],e1y=v1[1]-v0[1],e1z=v1[2]-v0[2];
-                float e2x=v2[0]-v0[0],e2y=v2[1]-v0[1],e2z=v2[2]-v0[2];
-                float px=rd[1]*e2z-rd[2]*e2y,py=rd[2]*e2x-rd[0]*e2z,pz=rd[0]*e2y-rd[1]*e2x;
-                float det=e1x*px+e1y*py+e1z*pz;
-                if (det>-1e-9f&&det<1e-9f) continue;
-                float invd=1.f/det;
-                float tvx=ro[0]-v0[0],tvy=ro[1]-v0[1],tvz=ro[2]-v0[2];
-                float u=(tvx*px+tvy*py+tvz*pz)*invd; if (u<0.f||u>1.f) continue;
-                float qx=tvy*e1z-tvz*e1y,qy=tvz*e1x-tvx*e1z,qz=tvx*e1y-tvy*e1x;
-                float vv=(rd[0]*qx+rd[1]*qy+rd[2]*qz)*invd; if (vv<0.f||u+vv>1.f) continue;
-                float tt=(e2x*qx+e2y*qy+e2z*qz)*invd;
-                if (tt>1e-3f&&tt<tmax) return 1;
+            for (int base=s; base<s+c; base+=4){
+                int m=s+c-base; if (m>4) m=4;
+                v4 e1x=LD(PE1X,base),e1y=LD(PE1Y,base),e1z=LD(PE1Z,base);
+                v4 e2x=LD(PE2X,base),e2y=LD(PE2Y,base),e2z=LD(PE2Z,base);
+                v4 v0x=LD(PV0X,base),v0y=LD(PV0Y,base),v0z=LD(PV0Z,base);
+                v4 px=vfnma(rdz,e2y, vmul(rdy,e2z));
+                v4 py=vfnma(rdx,e2z, vmul(rdz,e2x));
+                v4 pz=vfnma(rdy,e2x, vmul(rdx,e2y));
+                v4 det=vfma(e1z,pz, vfma(e1y,py, vmul(e1x,px)));
+                v4 invd=vdiv(S(1.f),det);
+                v4 tvx=vsub(rox,v0x),tvy=vsub(roy,v0y),tvz=vsub(roz,v0z);
+                v4 u=vmul(vfma(tvz,pz, vfma(tvy,py, vmul(tvx,px))), invd);
+                v4 qx=vfnma(tvz,e1y, vmul(tvy,e1z));
+                v4 qy=vfnma(tvx,e1z, vmul(tvz,e1x));
+                v4 qz=vfnma(tvy,e1x, vmul(tvx,e1y));
+                v4 vv=vmul(vfma(rdz,qz, vfma(rdy,qy, vmul(rdx,qx))), invd);
+                v4 tt=vmul(vfma(e2z,qz, vfma(e2y,qy, vmul(e2x,qx))), invd);
+                v4 ok=vgt(vabs(det), S(1e-9f));
+                ok=vand(ok, vge(u,S(0.f)));  ok=vand(ok, vle(u,S(1.f)));
+                ok=vand(ok, vge(vv,S(0.f))); ok=vand(ok, vle(vadd(u,vv),S(1.f)));
+                ok=vand(ok, vgt(tt,S(1e-3f))); ok=vand(ok, vlt(tt,S(tmax)));
+                ok=vand(ok, vlt(LANE, S((float)m)));
+                if (any(ok)) return 1;
             }
         } else { st[sp++]=NLEFT[node]; st[sp++]=NLEFT[node]+1; }
     }
@@ -404,7 +469,14 @@ void renderMesh(float az, float el, float dist, int w, int h, unsigned char* fb)
     SUN[0]=lx*il; SUN[1]=ly*il; SUN[2]=lz*il;
 
     skin();
-    buildBVH();
+    // Rebuild the BVH topology periodically (and when the mesh set changes);
+    // refit bounds on the in-between frames — the skinned pose deforms only
+    // modestly frame-to-frame, so the frame-0 partition stays effective.
+    static int frameNo=0, lastNT=-1;
+    if (NNODE==0 || NT!=lastNT || (frameNo % 16)==0){ buildBVH(); lastNT=NT; }
+    else refitBVH();
+    frameNo++;
+    packTris();   // SoA triangle store in BVH order for 4-wide intersection
 
     const float tx=FOCX, ty=0.85f, tz=FOCZ;
     float ce=fcos(el), se=fsin(el);

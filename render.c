@@ -118,14 +118,14 @@ static inline void dinoMasks(V3 P, v4 hit, const unsigned char *L, int n,
         int di = idx >= DPR[2][0] ? 2 : (idx >= DPR[1][0] ? 1 : 0);
         const float *q = PR[idx];
         v4 cx = vsub(P.x,S(q[9])), cy = vsub(P.y,S(q[10])), cz = vsub(P.z,S(q[11]));
-        v4 c2 = vadd(vadd(vmul(cx,cx),vmul(cy,cy)),vmul(cz,cz));
+        v4 c2 = vfma(cz,cz, vfma(cy,cy, vmul(cx,cx)));
         v4 rh = vadd(dd[di], S(q[12]));
         if (!any(vlt(c2, vmul(rh,rh)))) continue;
         v4 pax=vsub(P.x,S(q[0])), pay=vsub(P.y,S(q[1])), paz=vsub(P.z,S(q[2]));
-        v4 h = clamp01(vmul(vadd(vadd(vmul(pax,S(q[3])),vmul(pay,S(q[4]))),vmul(paz,S(q[5]))), S(q[6])));
-        v4 qx=vsub(pax,vmul(S(q[3]),h)), qy=vsub(pay,vmul(S(q[4]),h)), qz=vsub(paz,vmul(S(q[5]),h));
-        v4 t = vadd(vadd(vmul(vmul(qx,qx),S(q[13])), vmul(vmul(qy,qy),S(q[14]))), vmul(vmul(qz,qz),S(q[15])));
-        dd[di] = vmin(dd[di], vsub(vsqrt(t), vadd(S(q[7]), vmul(S(q[8]),h))));
+        v4 h = clamp01(vmul(vfma(paz,S(q[5]), vfma(pay,S(q[4]), vmul(pax,S(q[3])))), S(q[6])));
+        v4 qx=vfnma(S(q[3]),h,pax), qy=vfnma(S(q[4]),h,pay), qz=vfnma(S(q[5]),h,paz);
+        v4 t = vfma(vmul(qz,qz),S(q[15]), vfma(vmul(qy,qy),S(q[14]), vmul(vmul(qx,qx),S(q[13]))));
+        dd[di] = vmin(dd[di], vsub(vsqrt(t), vfma(S(q[8]),h, S(q[7]))));
     }
     v4 b01 = vlt(dd[0], dd[1]);
     v4 dm  = sel(dd[0], dd[1], b01);
