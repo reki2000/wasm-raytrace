@@ -229,8 +229,10 @@
 
   // Forward ground speed (world units / sec) for a locomotion clip, derived so
   // the planted foot does not slide: skin the mesh across one cycle, track how
-  // fast the low (ground-contact) verts sweep backward (+Z, since the models
-  // face -Z), and divide the summed backward travel by the clip duration.
+  // fast the low (ground-contact) verts sweep backward (-Z, since the models
+  // face +Z), and divide the summed backward travel by the clip duration.
+  // (positive-only sum works for either sweep direction: a periodic signal's
+  // total positive delta equals its total negative delta over a full cycle.)
   function gaitSpeed(model, ai) {
     const anim = model.anims[ai];
     if (!anim) return 0;

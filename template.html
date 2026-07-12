@@ -237,7 +237,7 @@ const MESH_MODELS = ['T-Rex','Velociraptor','Triceratops','Stegosaurus','Parasau
 const MESH_COLORS = ['#6f8a44','#8a6a45','#585a68','#7c5a33','#7f8a55','#4d6a55'];
 const ACTIONS = ['Idle','Walk','Run','Attack','Jump','Death'];
 const SPACING = 3.4;      // spacing of the line-up along X
-// The models face -Z, so walking/running advances them along -Z on the ground.
+// The models face +Z, so walking/running advances them along +Z on the ground.
 const CHASE_FAR  = 2.2;   // auto-run once this far behind the herd's leader
 const CHASE_NEAR = 0.35;  // stop auto-running once caught up within this
 
@@ -252,7 +252,7 @@ let meshLoaded = false, loadPromise = null;
 
 const meshState = MESH_MODELS.map(() => ({ mode:0, tex:1, refl:0.5, gloss:0.5, tran:0.65, ior:1.49 }));
 const meshAction = MESH_MODELS.map(() => 0);   // per-model anim index (set to Idle on load)
-const meshTravel = MESH_MODELS.map(() => 0);   // forward ground distance along -Z
+const meshTravel = MESH_MODELS.map(() => 0);   // forward ground distance along +Z
 const meshAutoRun = MESH_MODELS.map(() => false); // auto-running to rejoin the herd?
 
 const $scenesel = document.getElementById('scenesel');
@@ -410,7 +410,7 @@ async function enterMesh(i){
   refreshMeshCard();
   try { await ensureLoaded(); } catch(err){ console.error('model load failed:', err); return; }
   if (!sceneBtns[i+1].el.classList.contains('on')) return;   // focus changed while loading
-  if (sceneMode!=='mesh'){ focusXCur = built[focusIndex].slotX; focusZCur = -meshTravel[focusIndex]; }
+  if (sceneMode!=='mesh'){ focusXCur = built[focusIndex].slotX; focusZCur = meshTravel[focusIndex]; }
   sceneMode='mesh'; highlightAction(); refreshMeshCard();
 }
 function selectAction(a){
@@ -506,7 +506,7 @@ function frame(now){
       const ai = meshAutoRun[i] ? m.runAnim : meshAction[i];
       const act = actionNameOf(m, ai);
       const spd = act==='Run' ? m.runSpeed : act==='Walk' ? m.walkSpeed : 0;
-      meshTravel[i] += spd * dt;                  // advance along -Z on the ground
+      meshTravel[i] += spd * dt;                  // advance along +Z on the ground
       m.curAnim = ai;                             // effective clip this frame
     }
     // surface an auto-run override on the focused dino in the ACTION panel
@@ -515,11 +515,11 @@ function frame(now){
     }
     // camera follows the focused dino in x and z
     focusXCur += (built[focusIndex].slotX - focusXCur) * Math.min(1, dt*6);
-    focusZCur += (-meshTravel[focusIndex] - focusZCur) * Math.min(1, dt*6);
+    focusZCur += (meshTravel[focusIndex] - focusZCur) * Math.min(1, dt*6);
     e.meshSetFocus(focusXCur, focusZCur);
     for (const m of built) {
       const b = GLB.sampleBones(m, m.curAnim, t);
-      const zoff = -meshTravel[m.mi];
+      const zoff = meshTravel[m.mi];
       for (let j = 0; j < m.nj; j++) b[j*12+11] += zoff;   // rigid world-Z shift
       boneAll.set(b, m.jbase*12);
     }
