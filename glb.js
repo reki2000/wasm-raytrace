@@ -110,6 +110,30 @@
       vbase += n;
     }
 
+    // Weld by position: this format never shares an index across triangles
+    // (every face corner is its own vertex record), so average the authored
+    // normal over every corner at the same position -- including the ones the
+    // artist meant as a hard crease -- for a fully rounded, seam-free Gouraud
+    // look instead of preserving the model's original faceting.
+    {
+      const groups = new Map();
+      const nv = pos.length/3;
+      for (let i=0;i<nv;i++){
+        const key = pos[i*3]+','+pos[i*3+1]+','+pos[i*3+2];
+        let g = groups.get(key); if (!g){ g=[]; groups.set(key,g); }
+        g.push(i);
+      }
+      for (const idxs of groups.values()){
+        if (idxs.length<2) continue;
+        let sx=0,sy=0,sz=0;
+        for (const i of idxs){ sx+=nrm[i*3]; sy+=nrm[i*3+1]; sz+=nrm[i*3+2]; }
+        const l = Math.hypot(sx,sy,sz);
+        if (l<1e-8) continue;
+        sx/=l; sy/=l; sz/=l;
+        for (const i of idxs){ nrm[i*3]=sx; nrm[i*3+1]=sy; nrm[i*3+2]=sz; }
+      }
+    }
+
     // node rest TRS + hierarchy
     const nodes=g.nodes.map(nd=>({
       t: nd.translation||[0,0,0],
