@@ -17,15 +17,20 @@ static inline v4 vneg(v4 a){ return wasm_f32x4_neg(a); }
 static inline v4 vsqrt(v4 a){ return wasm_f32x4_sqrt(a); }
 static inline v4 vlt(v4 a, v4 b){ return wasm_f32x4_lt(a,b); }
 static inline v4 vgt(v4 a, v4 b){ return wasm_f32x4_gt(a,b); }
+static inline v4 vle(v4 a, v4 b){ return wasm_f32x4_le(a,b); }
+static inline v4 vge(v4 a, v4 b){ return wasm_f32x4_ge(a,b); }
 static inline v4 sel(v4 a, v4 b, v4 m){ return wasm_v128_bitselect(a,b,m); } // m ? a : b
 static inline v4 vand(v4 a, v4 b){ return wasm_v128_and(a,b); }
 static inline v4 vor (v4 a, v4 b){ return wasm_v128_or(a,b); }
 static inline v4 vandn(v4 a, v4 b){ return wasm_v128_andnot(a,b); } // a & ~b
 static inline v4 vnot(v4 a){ return wasm_v128_not(a); }
 static inline int any(v4 m){ return wasm_v128_any_true(m); }
+// Relaxed-SIMD fused multiply-add: 1 instruction on SSE(FMA)/NEON, higher precision.
+static inline v4 vfma(v4 a, v4 b, v4 c){ return wasm_f32x4_relaxed_madd(a,b,c); }   // a*b + c
+static inline v4 vfnma(v4 a, v4 b, v4 c){ return wasm_f32x4_relaxed_nmadd(a,b,c); }  // c - a*b
 static inline v4 clamp01(v4 x){ return vmin(vmax(x, S(0.f)), S(1.f)); }
 static inline v4 vclampf(v4 x, float a, float b){ return vmin(vmax(x, S(a)), S(b)); }
-static inline v4 mixv(v4 a, v4 b, v4 t){ return vadd(a, vmul(vsub(b,a), t)); }
+static inline v4 mixv(v4 a, v4 b, v4 t){ return vfma(vsub(b,a), t, a); }
 static inline v4 vfloor(v4 x){ return wasm_f32x4_floor(x); }
 static inline v4 vfract(v4 x){ return vsub(x, vfloor(x)); }
 
@@ -34,7 +39,7 @@ typedef struct { v4 r, g, b; } C3;
 static inline V3 v3(v4 x, v4 y, v4 z){ V3 r = {x,y,z}; return r; }
 static inline V3 v3add(V3 a, V3 b){ return v3(vadd(a.x,b.x), vadd(a.y,b.y), vadd(a.z,b.z)); }
 static inline V3 v3scale(V3 a, v4 s){ return v3(vmul(a.x,s), vmul(a.y,s), vmul(a.z,s)); }
-static inline v4 v3dot(V3 a, V3 b){ return vadd(vadd(vmul(a.x,b.x), vmul(a.y,b.y)), vmul(a.z,b.z)); }
+static inline v4 v3dot(V3 a, V3 b){ return vfma(a.z,b.z, vfma(a.y,b.y, vmul(a.x,b.x))); }
 static inline V3 v3norm(V3 a){ v4 il = vdiv(S(1.f), vsqrt(v3dot(a,a))); return v3scale(a, il); }
 
 // ---------- scalar math (no libm) ----------

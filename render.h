@@ -62,7 +62,7 @@ static inline v4 modeMask(int mode, v4 m0, v4 m1, v4 m2){
 
 // ---------- SDF evaluation ----------
 static inline v4 smin(v4 a, v4 b){
-    v4 h = clamp01(vadd(S(0.5f), vmul(vsub(b,a), S(0.5f/SK))));
+    v4 h = clamp01(vfma(vsub(b,a), S(0.5f/SK), S(0.5f)));
     return vsub(mixv(b, a, h), vmul(S(SK), vmul(h, vsub(S(1.f), h))));
 }
 
@@ -70,7 +70,8 @@ static inline v4 eyePair(V3 p, int k){
     v4 d = S(100.f);
     for (int i=k*2;i<k*2+2;i++){
         v4 ex=vsub(p.x,S(EYP[i][0])), ey=vsub(p.y,S(EYP[i][1])), ez=vsub(p.z,S(EYP[i][2]));
-        d = vmin(d, vsub(vsqrt(vadd(vadd(vmul(ex,ex),vmul(ey,ey)),vmul(ez,ez))), S(EYRAD[i])));
+        v4 e2 = vfma(ez,ez, vfma(ey,ey, vmul(ex,ex)));
+        d = vmin(d, vsub(vsqrt(e2), S(EYRAD[i])));
     }
     return d;
 }
@@ -86,12 +87,12 @@ static inline int buildList(V3 ro, V3 rd, v4 tA, v4 tB, float margin,
     for (int i=from;i<to;i++){
         const float *q = PR[i];
         v4 ocx=vsub(ro.x,S(q[9])), ocy=vsub(ro.y,S(q[10])), ocz=vsub(ro.z,S(q[11]));
-        v4 tc = vneg(vadd(vadd(vmul(ocx,rd.x),vmul(ocy,rd.y)),vmul(ocz,rd.z)));
+        v4 tc = vneg(vfma(ocz,rd.z, vfma(ocy,rd.y, vmul(ocx,rd.x))));
         tc = vmin(vmax(tc, tA), tB);
-        v4 px = vadd(ocx, vmul(rd.x,tc));
-        v4 py = vadd(ocy, vmul(rd.y,tc));
-        v4 pz = vadd(ocz, vmul(rd.z,tc));
-        v4 d2 = vadd(vadd(vmul(px,px),vmul(py,py)),vmul(pz,pz));
+        v4 px = vfma(rd.x,tc, ocx);
+        v4 py = vfma(rd.y,tc, ocy);
+        v4 pz = vfma(rd.z,tc, ocz);
+        v4 d2 = vfma(pz,pz, vfma(py,py, vmul(px,px)));
         v4 th = S(q[12] + margin);
         if (any(vlt(d2, vmul(th,th)))) L[n++] = (unsigned char)i;
     }
@@ -103,14 +104,14 @@ static inline v4 mapL(V3 p, const unsigned char *L, int n){
     for (int k=0;k<n;k++){
         const float *q = PR[L[k]];
         v4 cx = vsub(p.x,S(q[9])), cy = vsub(p.y,S(q[10])), cz = vsub(p.z,S(q[11]));
-        v4 d2 = vadd(vadd(vmul(cx,cx),vmul(cy,cy)),vmul(cz,cz));
+        v4 d2 = vfma(cz,cz, vfma(cy,cy, vmul(cx,cx)));
         v4 rh = vadd(d, S(q[12]));
         if (!any(vlt(d2, vmul(rh,rh)))) continue;
         v4 pax=vsub(p.x,S(q[0])), pay=vsub(p.y,S(q[1])), paz=vsub(p.z,S(q[2]));
-        v4 h = clamp01(vmul(vadd(vadd(vmul(pax,S(q[3])),vmul(pay,S(q[4]))),vmul(paz,S(q[5]))), S(q[6])));
-        v4 qx=vsub(pax,vmul(S(q[3]),h)), qy=vsub(pay,vmul(S(q[4]),h)), qz=vsub(paz,vmul(S(q[5]),h));
-        v4 t = vadd(vadd(vmul(vmul(qx,qx),S(q[13])), vmul(vmul(qy,qy),S(q[14]))), vmul(vmul(qz,qz),S(q[15])));
-        v4 dd = vsub(vsqrt(t), vadd(S(q[7]), vmul(S(q[8]),h)));
+        v4 h = clamp01(vmul(vfma(paz,S(q[5]), vfma(pay,S(q[4]), vmul(pax,S(q[3])))), S(q[6])));
+        v4 qx=vfnma(S(q[3]),h,pax), qy=vfnma(S(q[4]),h,pay), qz=vfnma(S(q[5]),h,paz);
+        v4 t = vfma(vmul(qz,qz),S(q[15]), vfma(vmul(qy,qy),S(q[14]), vmul(vmul(qx,qx),S(q[13]))));
+        v4 dd = vsub(vsqrt(t), vfma(S(q[8]),h, S(q[7])));
         d = smin(d, dd);
     }
     return d;
@@ -132,10 +133,10 @@ static inline v4 segDist(v4 px, v4 py, v4 pz, const float *s){
     v4 ax=vsub(px,S(s[0])), ay=vsub(py,S(s[1])), az=vsub(pz,S(s[2]));
     float bx=s[3]-s[0], by=s[4]-s[1], bz=s[5]-s[2];
     float il2 = 1.f/(bx*bx + by*by + bz*bz);
-    v4 h = clamp01(vmul(vadd(vadd(vmul(ax,S(bx)),vmul(ay,S(by))),vmul(az,S(bz))), S(il2)));
-    v4 qx=vsub(ax,vmul(S(bx),h)), qy=vsub(ay,vmul(S(by),h)), qz=vsub(az,vmul(S(bz),h));
-    return vsub(vsqrt(vadd(vadd(vmul(qx,qx),vmul(qy,qy)),vmul(qz,qz))),
-                vadd(S(s[6]), vmul(S(s[7]-s[6]), h)));
+    v4 h = clamp01(vmul(vfma(az,S(bz), vfma(ay,S(by), vmul(ax,S(bx)))), S(il2)));
+    v4 qx=vfnma(S(bx),h,ax), qy=vfnma(S(by),h,ay), qz=vfnma(S(bz),h,az);
+    return vsub(vsqrt(vfma(qz,qz, vfma(qy,qy, vmul(qx,qx)))),
+                vfma(S(s[7]-s[6]), h, S(s[6])));
 }
 
 // ---------- frame pipeline ----------
