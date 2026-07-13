@@ -174,11 +174,14 @@ SDF 経路とは独立した**第2レンダラ**。[Quaternius Animated Dinosaur
   持つため。実装時の落とし穴だった)。
 - **wasm(`mesh.c`)** — 連結済みデータを `skin()` が LBS で一括変形 → BVH は**16フレームに1回だけ**中点分割で
   再構築(`buildBVH()`)し、間のフレームはトポロジ据え置きでノード AABB のみ更新する **`refitBVH()`**(スキン変形は
-  フレーム間で小さいので初期分割が有効なまま) → `packTris()` が **BVH 順の SoA 三角形ストア**を作る → 再帰 `shade()`
-  が最近接ヒットを求め、メッシュ/床/空で分岐。三角形交差はリーフ内を **4三角形同時の SIMD Möller–Trumbore**
-  (`traceMesh()` / `occluded()`、1レイ×4三角をレーン並列、余りはレーンマスクで無効化)で処理する。
-  法線は**スキン後の面法線**(フラットシェード)。プライマリ + 太陽シャドウ + **床ミラー**(1バウンス)
-  + **アクリル透過**(背後を再帰トレース)。マテリアルは三角形の `TMDL` で個体別に引く。
+  フレーム間で小さいので初期分割が有効なまま) → `packTris()` が **BVH 順の SoA 三角形ストア**を作る。
+  一次可視性は**横4ピクセルのレイパケット**で処理する:`traceMeshP()` が1本のスタックを4レイで共有し、per-lane
+  スラブ + per-lane best で最近接ヒットを求める(三角形をスプラットし1三角×4レイをレーン並列)。続いて各レーンの
+  法線を求め、**太陽シャドウ4本を `occludedP()` で1回のパケット走査に束ねる**(全レイが太陽方向を共有)。
+  そのうえで per-lane にスカラーで陰影(`shadeMeshHit()` / `shadeGround()`)を評価する。二次・再帰レイ(**床ミラー**
+  1バウンス、**アクリル透過**の背後トレース)は従来どおりスカラー経路(`shade()` / `shadeMeshHitAuto()`)。単発の
+  三角形交差(再帰レイやリーフ)は **4三角形同時の SIMD Möller–Trumbore**(`traceMesh()` / `occluded()`)。
+  法線は既定で**スキン後の面法線**(フラット)、マテリアルごとにグーロー補間を選択可。マテリアルは `TMDL` で個体別。
 
 エクスポートは `meshPos/meshJoint/meshWeight/meshIndex/meshColor/meshTriModel`(読込時に1回)、`meshBone`
 (毎フレーム)、`meshSetCounts` / `meshSetFocus(x,z)`(カメラ中心)/ `meshMat(i,...)`(個体別マテリアル)/
@@ -186,9 +189,10 @@ SDF 経路とは独立した**第2レンダラ**。[Quaternius Animated Dinosaur
 `template.html` のフレームループが `sceneMode` で `render()`(SDF)と `renderMesh()`(メッシュ)を分岐し、
 カメラ中心 `focusXCur` は選択個体のスロット X へ lerp する。
 
-低ポリ(6体計 約9500三角形)なので適応解像度で実用速度。交差は4三角同時 SIMD 化済み、BVH はフレーム間
-リフィット済み。残る最適化余地はレイパケット化(4レイ同時)とマルチスレッド(Web Worker + `SharedArrayBuffer`、
-要 cross-origin isolation)。
+低ポリ(6体計 約9500三角形)なので適応解像度で実用速度。交差は4三角同時 SIMD、BVH はフレーム間リフィット、
+一次可視性 + 太陽シャドウはレイパケット化済み(元の未最適化比で約1.35倍)。残る余地は二次・再帰レイ(床ミラー/
+アクリル)のパケット化と、マルチスレッド(Web Worker + `SharedArrayBuffer`、要 cross-origin isolation)。ただし
+リーフが既に SIMD 化済みのため、ここからのレイパケット化はブックキーピングが利得を相殺しやすく費用対効果は逓減する。
 
 ## 使われている技術まとめ
 
