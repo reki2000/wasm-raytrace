@@ -1,5 +1,15 @@
 # マルチスレッド化計画 — wasm threads によるレンダリング並列化
 
+> **状況**: PR1(Phase 0 + SDF 経路の行並列 + COOP/COEP + フォールバック)実装済み。
+> 完了同期は当初案の `Atomics.wait`/`waitAsync` ではなく **postMessage の
+> 'rowsDone' 通知**に簡略化した(メインスレッドはブロック待ち不可なうえ、
+> postMessage は元々ワーカー起動時の 'go' 送信でも使うため、行カウンタの
+> アトミック分配以外は素朴な postMessage 往復で足りると判断)。実測(4コア
+> コンテナ、480×270、node worker_threads 経由のヘッドレス計測):
+> ST 39ms/frame → MT 4participants 10.6ms/frame(3.6× 、ほぼ線形)。
+> 出力は 1/2/4 参加者すべてで ST とバイト一致を確認済み(`test_mt.js`)。
+> 未着手: mesh 経路の並列化(PR2)、準備フェーズの並列化(PR2/3、計測後判断)。
+
 emscripten を導入せず、現行の clang + wasm-ld 直叩き・依存ゼロ・1ファイル配布を維持したまま、
 wasm threads(shared memory + atomics)+ Web Worker プールでピクセルループを並列化する。
 

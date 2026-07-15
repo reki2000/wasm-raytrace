@@ -36,6 +36,7 @@ jobs:
           cp dino-herd.html _site/dino-herd.html
           cp glb.js _site/glb.js
           cp -r models _site/models
+          cp _headers _site/_headers
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3

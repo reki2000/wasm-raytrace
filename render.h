@@ -140,8 +140,12 @@ static inline v4 segDist(v4 px, v4 py, v4 pz, const float *s){
 }
 
 // ---------- frame pipeline ----------
-// Renders one frame into fb (RGBA8, w*h). Scene must already be built
-// (animate) and the clock advanced (animTick) for this t.
+// Renders rows [y0,y1) of the frame into fb (RGBA8, w*h). Scene must already
+// be built (animate) and the clock advanced (animTick) for this t. Rows are
+// fully independent (disjoint fb writes, read-only scene state), so this may
+// be called concurrently by multiple threads with different [y0,y1) ranges.
+void renderRows(float az, float el, float dist, int w, int h, unsigned char *fb, int y0, int y1);
+// Renders the full frame (all rows) — single-threaded convenience wrapper.
 void renderFrame(float az, float el, float dist, int w, int h, unsigned char *fb);
 
 #endif

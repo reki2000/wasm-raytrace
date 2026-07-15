@@ -170,7 +170,7 @@ static v4 softshadow(V3 p, v4 m){
 }
 
 // ---------- frame pipeline ----------
-void renderFrame(float az, float el, float dist, int w, int h, unsigned char *fb){
+void renderRows(float az, float el, float dist, int w, int h, unsigned char *fb, int y0, int y1){
     const float tx=0.f, ty=0.85f, tz=0.f;
     float ce=fcos(el), se=fsin(el);
     float cxx = tx + dist*ce*fsin(az);
@@ -187,7 +187,7 @@ void renderFrame(float az, float el, float dist, int w, int h, unsigned char *fb
     float ih = 2.0f/(float)h;
     V3 Lv = v3(S(SUNX), S(SUNY), S(SUNZ));
 
-    for (int y=0; y<h; y++){
+    for (int y=y0; y<y1; y++){
         float pyf = ((float)h*0.5f - ((float)y+0.5f)) * ih;
         unsigned char *row = fb + (unsigned)(y*w)*4u;
         for (int x=0; x<w; x+=4){
@@ -633,4 +633,8 @@ void renderFrame(float az, float el, float dist, int w, int h, unsigned char *fb
             wasm_v128_store(row + (unsigned)x*4u, outp);
         }
     }
+}
+
+void renderFrame(float az, float el, float dist, int w, int h, unsigned char *fb){
+    renderRows(az, el, dist, w, h, fb, 0, h);
 }
