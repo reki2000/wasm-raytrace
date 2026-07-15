@@ -2,4 +2,4 @@
 dino.wasm
 dino-herd.html
 *.ppm
-*.png
+/*.png
