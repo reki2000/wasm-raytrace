@@ -1,14 +1,28 @@
 # マルチスレッド化計画 — wasm threads によるレンダリング並列化
 
-> **状況**: PR1(Phase 0 + SDF 経路の行並列 + COOP/COEP + フォールバック)実装済み。
+> **状況**: PR1(Phase 0 + SDF 経路の行並列 + COOP/COEP + フォールバック)、
+> PR2(mesh 経路の行並列)ともに実装済み。
 > 完了同期は当初案の `Atomics.wait`/`waitAsync` ではなく **postMessage の
 > 'rowsDone' 通知**に簡略化した(メインスレッドはブロック待ち不可なうえ、
 > postMessage は元々ワーカー起動時の 'go' 送信でも使うため、行カウンタの
-> アトミック分配以外は素朴な postMessage 往復で足りると判断)。実測(4コア
-> コンテナ、480×270、node worker_threads 経由のヘッドレス計測):
-> ST 39ms/frame → MT 4participants 10.6ms/frame(3.6× 、ほぼ線形)。
-> 出力は 1/2/4 参加者すべてで ST とバイト一致を確認済み(`test_mt.js`)。
-> 未着手: mesh 経路の並列化(PR2)、準備フェーズの並列化(PR2/3、計測後判断)。
+> アトミック分配以外は素朴な postMessage 往復で足りると判断)。行カウンタ
+> (`g_nextRow`/`g_frameH`/`frameBegin`)は SDF・mesh 両経路で共用(同一フレーム
+> 内で両シーンが同時に走ることはないため)。ワーカースクリプトは `fn` 名で
+> 呼び出す export を選ぶ汎用プロトコルにして、SDF/mesh 双方に対応させた。
+>
+> 実測(4コアコンテナ、480×270、node worker_threads 経由のヘッドレス計測):
+> - SDF: ST 39ms → MT 4participants 10.9ms/frame(3.6×、ほぼ線形)
+> - mesh: ST 48ms → MT 4participants 14.0ms/frame(3.4×)
+>
+> 実ブラウザ(Playwright + Chromium、COOP/COEP 付きローカルサーバ)でも確認:
+> mesh 経路 960×540 固定で ST 159ms → MT 73.5ms(2.2×。準備フェーズ
+> (skin/BVH/packTris、未並列)の固定コスト比率が上がる分、ヘッドレス計測より
+> 倍率は下がるが明確に効果あり)。出力は 1/2/4 参加者すべてで ST とバイト
+> 一致を確認済み(`test_mt.js`/`test_mt_mesh.js`)。
+>
+> 未着手: 準備フェーズ(skin/BVH/packTris)の並列化(Phase 2、計測結果を
+> 踏まえて要否を判断。上記の通り高解像度では効果が薄まってきているため、
+> 次にやるならここが有力)。
 
 emscripten を導入せず、現行の clang + wasm-ld 直叩き・依存ゼロ・1ファイル配布を維持したまま、
 wasm threads(shared memory + atomics)+ Web Worker プールでピクセルループを並列化する。

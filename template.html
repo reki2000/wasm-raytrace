@@ -139,6 +139,9 @@ const STACK_SZ = 65536;               // must match build.sh's -z stack-size and
 // not available (no COOP/COEP headers, e.g. a local file:// open, or an
 // engine without the wasm threads proposal) we fall back to the plain
 // single-threaded build with identical rendering output.
+// m.fn selects which *RowsSteal export to call (renderRowsSteal for the SDF
+// path, renderMeshRowsSteal for the mesh path) — one worker script covers
+// both renderers.
 const WORKER_SRC = `
 let ex;
 onmessage = async (ev) => {
@@ -149,7 +152,7 @@ onmessage = async (ev) => {
     ex.__stack_pointer.value = m.stackBase + (m.id + 1) * ${STACK_SZ};
     postMessage({ type: 'ready' });
   } else if (m.type === 'go') {
-    ex.renderRowsSteal(m.az, m.el, m.dist, m.w, m.h);
+    ex[m.fn](...m.args);
     postMessage({ type: 'rowsDone' });
   }
 };
@@ -208,16 +211,24 @@ document.getElementById('badge').textContent =
   `WASM32 + SIMD128 × 4-RAY PACKETS · ${mtActive ? `MT×${workers.length + 1}` : 'ST'}`;
 
 // rows are independent/deterministic, so this may be called from the main
-// thread and every worker concurrently once frameBegin() has been issued
-function renderSdfMT(t, az, el, dist, w, h){
-  e.renderPrep(t);
+// thread and every worker concurrently once frameBegin() has been issued.
+// `fn` is the *RowsSteal export to drive (renderRowsSteal / renderMeshRowsSteal).
+function renderRowsMT(fn, h, args){
   e.frameBegin(h);
   const pending = workers.map(wk => new Promise(resolve => {
     wk.addEventListener('message', function h2(ev){ if (ev.data.type==='rowsDone'){ wk.removeEventListener('message', h2); resolve(); } });
   }));
-  for (const wk of workers) wk.postMessage({ type: 'go', az, el, dist, w, h });
-  e.renderRowsSteal(az, el, dist, w, h);   // main thread joins the row work-stealing too
+  for (const wk of workers) wk.postMessage({ type: 'go', fn, args });
+  e[fn](...args);   // main thread joins the row work-stealing too
   return Promise.all(pending);
+}
+function renderSdfMT(t, az, el, dist, w, h){
+  e.renderPrep(t);
+  return renderRowsMT('renderRowsSteal', h, [az, el, dist, w, h]);
+}
+function renderMeshMT(az, el, dist, w, h){
+  e.meshPrep();
+  return renderRowsMT('renderMeshRowsSteal', h, [az, el, dist, w, h]);
 }
 
 // ---- per-dino material panel ----
@@ -612,7 +623,8 @@ async function frame(now){
       for (let j = 0; j < m.nj; j++) b[j*12+11] += zoff;   // rigid world-Z shift
       boneAll.set(b, m.jbase*12);
     }
-    e.renderMesh(az, el, dist, w, h);
+    if (mtActive) await renderMeshMT(az, el, dist, w, h);
+    else e.renderMesh(az, el, dist, w, h);
   } else if (mtActive) {
     await renderSdfMT(t, az, el, dist, w, h);
   } else {

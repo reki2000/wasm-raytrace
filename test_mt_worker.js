@@ -1,6 +1,8 @@
-// worker side of test_mt.js: instantiates dino-mt.wasm against the shared
+// worker side of test_mt*.js: instantiates dino-mt.wasm against the shared
 // memory handed down by the parent, gives itself a private stack slice, then
-// steals row chunks whenever asked.
+// steals row chunks whenever asked. `fn` selects which *RowsSteal export to
+// call (renderRowsSteal for the SDF path, renderMeshRowsSteal for the mesh
+// path) so this one worker script covers both renderers.
 const { workerData, parentPort } = require('worker_threads');
 const fs = require('fs');
 
@@ -15,7 +17,7 @@ const fs = require('fs');
   parentPort.postMessage({ type: 'ready' });
   parentPort.on('message', (msg) => {
     if (msg.type === 'go') {
-      e.renderRowsSteal(msg.az, msg.el, msg.dist, msg.w, msg.h);
+      e[msg.fn](...msg.args);
       parentPort.postMessage({ type: 'rowsDone', id });
     } else if (msg.type === 'quit') {
       process.exit(0);

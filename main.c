@@ -39,6 +39,14 @@ void e_renderMesh(float az, float el, float dist, int w, int h){
     renderMesh(az, el, dist, w, h, FB);
 }
 
+__attribute__((export_name("meshPrep")))
+void e_meshPrep(void){ meshPrep(); }
+
+__attribute__((export_name("renderMeshRows")))
+void e_renderMeshRows(float az, float el, float dist, int w, int h, int y0, int y1){
+    renderMeshRows(az, el, dist, w, h, FB, y0, y1);
+}
+
 __attribute__((export_name("mat")))
 void mat(int i, int mode, float refl, float tran, float ior, float tex, float gloss){
     setMaterial(i, mode, refl, tran, ior, tex, gloss);
@@ -101,6 +109,19 @@ void e_renderRowsSteal(float az, float el, float dist, int w, int h){
         int y1 = y0 + ROW_CHUNK;
         if (y1 > g_frameH) y1 = g_frameH;
         renderRows(az, el, dist, w, h, FB, y0, y1);
+    }
+}
+
+// Mesh-path counterpart of renderRowsSteal; shares the same g_nextRow/
+// g_frameH counter (the two scenes are never rendered in the same frame).
+__attribute__((export_name("renderMeshRowsSteal")))
+void e_renderMeshRowsSteal(float az, float el, float dist, int w, int h){
+    for (;;){
+        int y0 = atomic_fetch_add(&g_nextRow, ROW_CHUNK);
+        if (y0 >= g_frameH) break;
+        int y1 = y0 + ROW_CHUNK;
+        if (y1 > g_frameH) y1 = g_frameH;
+        renderMeshRows(az, el, dist, w, h, FB, y0, y1);
     }
 }
 #endif

@@ -45,8 +45,9 @@ async function makeMtSession(numWorkers) {
     const pending = workers.map(wk => new Promise(resolve => {
       wk.once('message', (msg) => { if (msg.type === 'rowsDone') resolve(); });
     }));
-    for (const wk of workers) wk.postMessage({ type: 'go', az, el, dist, w, h });
-    e.renderRowsSteal(az, el, dist, w, h); // main participates too
+    const args = [az, el, dist, w, h];
+    for (const wk of workers) wk.postMessage({ type: 'go', fn: 'renderRowsSteal', args });
+    e.renderRowsSteal(...args); // main participates too
     await Promise.all(pending);
     return Buffer.from(new Uint8Array(mem.buffer, e.fb(), w * h * 4));
   }
