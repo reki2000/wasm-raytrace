@@ -1,6 +1,6 @@
 # DINO // RT HERD — wasm SIMD128 ray-marched dinosaur herd
 
-**🦖 デモページ: <https://reki2000.github.io/wasm-raytrace/>**
+**🦖 デモページ: <https://wasm-raytrace.pages.dev>**
 (main ブランチへの push で GitHub Actions が自動ビルドして GitHub Pages に公開されます)
 
 依存ゼロで動く SDF レイマーチング恐竜デモです。
@@ -13,6 +13,8 @@ WebAssembly SIMD128 だけでリアルタイムにレイマーチングします
 リアルタイムに調整できます。
 
 ## Quaternius 恐竜モデル(三角形メッシュ経路)
+
+![Polygon screenshot](images/polygon-screenshot.png)
 
 左パネルの **MODEL** で [Quaternius Animated Dinosaur Pack](https://quaternius.com/packs/animateddinosaurs.html)
 の6体(T-Rex / Velociraptor / Triceratops / Stegosaurus / Parasaurolophus /
@@ -110,7 +112,7 @@ C ソースは「レンダリングエンジン」「アニメーションエン
 デプロイします。初回のみリポジトリの Settings → Pages で
 Source を **GitHub Actions** にしてください(workflow 側でも自動有効化を試みます)。
 
-公開 URL: <https://reki2000.github.io/wasm-raytrace/>
+公開 URL: <https://wasm-raytrace.pages.dev>
 
 ## クレジット / ライセンス
 
