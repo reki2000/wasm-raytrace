@@ -4,6 +4,26 @@
 ビルド方法や使い方は [README.md](README.md) を参照してください。
 実装位置はすべて**関数名・定数名**で参照します(行番号は使いません)。
 
+## ファイル構成
+
+| ファイル | 内容 |
+|---|---|
+| `main.c` | 統合メイン。SDF 経路 `render(...)` とメッシュ経路 `renderMesh(...)` / `mesh*` アップロード用エクスポート、`fb()` / `mat(...)` |
+| `render.c` / `render.h` | SDF レンダリングエンジン(SDF プリミティブ / カリング / マーチング / 影 / 環境 / マテリアル / フレームパイプライン) |
+| `mesh.c` / `mesh.h` | メッシュレンダリングエンジン(LBS スキニング / BVH / 三角形レイトレ / フラットシェード)。Quaternius glTF 用 |
+| `glb.js` | GLB パーサ + glTF スケルタルアニメのサンプラ(Node/ブラウザ共用) |
+| `anim.c` / `anim.h` | アニメーションエンジン(クロック / ノースリップ歩行 / 群れ運動) |
+| `dino_model.c` / `dino_model.h` | 恐竜3種のジオメトリとアニメーションパラメータ、種別テクスチャ |
+| `vec.h` | 共通 SIMD ヘルパーと libm 代替の数学関数 |
+| `models/*.glb` | Quaternius Animated Dinosaur Pack(6体、実行時 fetch) |
+| `template.html` | UI・適応解像度・入力処理。`__WASM_B64__` が wasm 埋め込み位置 |
+| `embed.py` | wasm を base64 で HTML に焼き込み |
+| `build.sh` | ビルドスクリプト(clang でコンパイル → `embed.py`) |
+| `test.js` | node ベンチ + フレームダンプ(SDF 経路) |
+| `test_mesh.js` | node でメッシュ経路を検証(GLB 読込 → スキン → 描画 → PPM) |
+| `.github/workflows/cloudflare.yml` | main への push で自動ビルド → Cloudflare Pages 公開 |
+| `README.md` | 概要・操作方法・ビルド方法・ライセンス |
+
 ## モジュール構成
 
 ソースは「レンダリングエンジン」「アニメーションエンジン」「恐竜モデル」「統合メイン」の4つに分割されています。
