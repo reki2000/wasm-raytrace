@@ -1,57 +1,64 @@
 # DINO // RT HERD — wasm SIMD128 ray-marched dinosaur herd
 
-依存ゼロで動く、WebAssembly SIMD128 によるリアルタイム SDF レイマーチング恐竜デモです。
-GPU を使わず、CPU の wasm だけで恐竜の群れを描画します。Quaternius 製の三角形メッシュ
-恐竜モデル(6種)の描画にも対応しています。
+[日本語](README.ja.md)
 
-- emscripten 不要(clang + wasm-ld 直叩き)、libc 未使用
-- 出力は `dino-herd.html` 1ファイル(wasm は base64 で埋め込み)
+A dependency-free, real-time SDF ray-marched dinosaur demo powered by
+WebAssembly SIMD128. No GPU is used — the herd is rendered entirely on the
+CPU via wasm. Also supports rendering the Quaternius triangle-mesh dinosaur
+models (6 species).
 
-## デモ
+- No emscripten (clang + wasm-ld directly), no libc
+- Output is a single `dino-herd.html` file (wasm embedded as base64)
+
+## Demo
 
 🦖 <https://wasm-raytrace.pages.dev/>
 
-## 操作方法
+## Usage
 
-- ドラッグ: カメラの周回(オービット) / ホイール・ピンチ: ズーム
-- 左パネル: 恐竜ごとにマテリアル(ノーマル / テクスチャ / 金属反射 / アクリル半透明)と
-  反射率・透過率・屈折率などをリアルタイムに調整
-- **MODEL** ボタン: Quaternius メッシュ恐竜(T-Rex / Velociraptor / Triceratops /
-  Stegosaurus / Parasaurolophus / Apatosaurus)に切り替え、ACTION(Idle/Walk/Run/
-  Attack/Jump/Death)を選択可能
-- **SDF HERD** ボタン: 元の SDF 群れ表示に戻る
+- Drag: orbit the camera / Wheel or pinch: zoom
+- Left panel: adjust each dinosaur's material (normal / textured / metallic
+  reflective / acrylic translucent) and reflectivity, transmittance,
+  refractive index, etc. in real time
+- **MODEL** button: switch to the Quaternius mesh dinosaurs (T-Rex /
+  Velociraptor / Triceratops / Stegosaurus / Parasaurolophus /
+  Apatosaurus) and pick an ACTION (Idle/Walk/Run/Attack/Jump/Death)
+- **SDF HERD** button: return to the original SDF herd view
 
-## 必要ツール
+## Requirements
 
-- clang + wasm-ld (lld) — wasm32 ターゲット対応版。Ubuntu なら `apt install clang lld`(動作確認は clang 18)
-- python3 — base64 埋め込み用
+- clang + wasm-ld (lld) with wasm32 target support. On Ubuntu: `apt install clang lld` (tested with clang 18)
+- python3 — for base64 embedding
 
-## ビルド
+## Build
 
 ```sh
 ./build.sh
 ```
 
-`dino-herd.html` が生成されます。ブラウザで直接開けますが、Quaternius モデル機能は
-実行時に `glb.js` と `models/*.glb` を同一オリジンで fetch するため、ローカル確認時は
-`python3 -m http.server` などで配信してください(`file://` だと fetch が失敗します)。
+This produces `dino-herd.html`. It can be opened directly in a browser, but
+the Quaternius model feature fetches `glb.js` and `models/*.glb` from the
+same origin at runtime, so serve it locally with something like
+`python3 -m http.server` (`file://` will fail to fetch).
 
-## ファイル構成・コード解説
+## File layout & architecture
 
-各ファイルの役割、設計理念、機能ごとの実装箇所は **[ARCHITECTURE.md](ARCHITECTURE.md)**
-にまとめています。改修の際はそちらを入口にしてください。
+See **[ARCHITECTURE.md](ARCHITECTURE.md)** for the role of each file, the
+design philosophy, and where each feature is implemented. Start there when
+making changes.
 
-## デプロイ
+## Deployment
 
-main ブランチへの push で `.github/workflows/cloudflare.yml` が自動ビルドして
-Cloudflare Pages に公開します。
+`.github/workflows/cloudflare.yml` automatically builds and deploys to
+Cloudflare Pages on every push to `main`.
 
-## クレジット / ライセンス
+## Credits / License
 
-- **コード**: MIT License(`LICENSE` 参照)
-- **恐竜モデル(`models/*.glb`)**: [Quaternius](https://quaternius.com/) — *Animated Dinosaur Pack*。
-  **CC0 1.0 Universal(パブリックドメイン)**。個人・商用利用、改変、再配布いずれも自由で、
-  帰属表示は義務ではありません(本プロジェクトは敬意として明記しています)。
-  配布元: <https://quaternius.com/packs/animateddinosaurs.html>
+- **Code**: MIT License (see `LICENSE`)
+- **Dinosaur models (`models/*.glb`)**: [Quaternius](https://quaternius.com/) — *Animated Dinosaur Pack*.
+  **CC0 1.0 Universal (public domain)**. Free for personal and commercial
+  use, modification, and redistribution; attribution is not required (this
+  project credits it out of respect).
+  Source: <https://quaternius.com/packs/animateddinosaurs.html>
 
-モデルのクレジットは実行画面右上にも常時表示されます。
+Model credits are also shown permanently in the top-right corner of the demo.
