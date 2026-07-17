@@ -514,7 +514,10 @@ static void traceMeshP(const float*ro, V3 rd, v4 tmax, v4*tHitOut, int*hitId){
 }
 
 // ---------- frame ----------
-void renderMesh(float az, float el, float dist, int w, int h, unsigned char* fb){
+// Rebuilds all per-frame scene state (skin, BVH, packed triangle SoA).
+// Single-threaded, main instance only — renderMeshRows below is read-only
+// over this state, so it must run to completion before any row is rendered.
+void meshPrep(void){
     float lx=0.52f,ly=0.64f,lz=0.46f;
     float il=1.f/fsqrt(lx*lx+ly*ly+lz*lz);
     SUN[0]=lx*il; SUN[1]=ly*il; SUN[2]=lz*il;
@@ -528,7 +531,12 @@ void renderMesh(float az, float el, float dist, int w, int h, unsigned char* fb)
     else refitBVH();
     frameNo++;
     packTris();   // SoA triangle store in BVH order for 4-wide intersection
+}
 
+// Renders rows [y0,y1) into fb. Rows are fully independent (disjoint fb
+// writes, read-only scene state from meshPrep), so this may be called
+// concurrently by multiple threads with different [y0,y1) ranges.
+void renderMeshRows(float az, float el, float dist, int w, int h, unsigned char* fb, int y0, int y1){
     const float tx=FOCX, ty=0.85f, tz=FOCZ;
     float ce=fcos(el), se=fsin(el);
     float cxx=tx+dist*ce*fsin(az), cyy=ty+dist*se, czz=tz+dist*ce*fcos(az);
@@ -542,7 +550,7 @@ void renderMesh(float az, float el, float dist, int w, int h, unsigned char* fb)
     float ro[3]={cxx,cyy,czz};
     v4 X4=wasm_f32x4_make(0.f,1.f,2.f,3.f);
 
-    for (int y=0;y<h;y++){
+    for (int y=y0;y<y1;y++){
         float pyf=((float)h*0.5f-((float)y+0.5f))*ih;
         unsigned char *row=fb+(unsigned)(y*w)*4u;
         for (int x=0;x<w;x+=4){
@@ -575,4 +583,9 @@ void renderMesh(float az, float el, float dist, int w, int h, unsigned char* fb)
             }
         }
     }
+}
+
+void renderMesh(float az, float el, float dist, int w, int h, unsigned char* fb){
+    meshPrep();
+    renderMeshRows(az, el, dist, w, h, fb, 0, h);
 }

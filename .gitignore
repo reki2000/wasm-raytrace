@@ -1,5 +1,6 @@
 # build artifacts
 dino.wasm
+dino-mt.wasm
 dino-herd.html
 *.ppm
 *.png

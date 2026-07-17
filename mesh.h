@@ -35,4 +35,10 @@ void meshMat(int i, int mode, float refl, float tran, float ior, float tex, floa
 // skin -> build BVH -> raytrace the line-up into fb (RGBA8, w*h)
 void renderMesh(float az, float el, float dist, int w, int h, unsigned char* fb);
 
+// split prep (skin + BVH + triangle pack, single-threaded) / row-render
+// (read-only over that state; rows are independent, safe to call concurrently
+// with different [y0,y1) ranges from any thread sharing this module's memory)
+void meshPrep(void);
+void renderMeshRows(float az, float el, float dist, int w, int h, unsigned char* fb, int y0, int y1);
+
 #endif

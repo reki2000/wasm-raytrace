@@ -100,7 +100,7 @@
 <div id="hud">
   <div class="fps"><i id="fps">--</i> fps</div>
   <div><span id="res">--</span> · <span id="ms">--</span> ms/frame</div>
-  <div class="badge">WASM32 + SIMD128 × 4-RAY PACKETS</div>
+  <div class="badge" id="badge">WASM32 + SIMD128 × 4-RAY PACKETS</div>
 </div>
 <div id="hint">drag: orbit &nbsp;·&nbsp; wheel / pinch: zoom &nbsp;·&nbsp; panel: surface materials</div>
 <div id="credit">恐竜モデル: <a href="https://quaternius.com/packs/animateddinosaurs.html" target="_blank" rel="noopener">Quaternius</a> — Animated Dinosaur Pack · CC0 1.0</div>
@@ -130,17 +130,106 @@ Chrome 91+ / Firefox 89+ / Safari 16.4+ で開いてください。</div></div>
 <script>
 (async () => {
 const B64 = "__WASM_B64__";
+const B64_MT = "__WASM_MT_B64__";
+const MT_PAGES = __WASM_MT_PAGES__;   // must match build.sh's --initial-memory/--max-memory for dino-mt.wasm
+const STACK_SZ = 65536;               // must match build.sh's -z stack-size and main.c's TSTACK_SZ
 
 // ---- instantiate (SIMD required) ----
-const bin = Uint8Array.from(atob(B64), c => c.charCodeAt(0));
-let e;
+// Threaded path needs cross-origin isolation (SharedArrayBuffer); when it's
+// not available (no COOP/COEP headers, e.g. a local file:// open, or an
+// engine without the wasm threads proposal) we fall back to the plain
+// single-threaded build with identical rendering output.
+// m.fn selects which *RowsSteal export to call (renderRowsSteal for the SDF
+// path, renderMeshRowsSteal for the mesh path) — one worker script covers
+// both renderers.
+const WORKER_SRC = `
+let ex;
+onmessage = async (ev) => {
+  const m = ev.data;
+  if (m.type === 'init') {
+    const { instance } = await WebAssembly.instantiate(m.bytes, { env: { memory: m.mem } });
+    ex = instance.exports;
+    ex.__stack_pointer.value = m.stackBase + (m.id + 1) * ${STACK_SZ};
+    postMessage({ type: 'ready' });
+  } else if (m.type === 'go') {
+    ex[m.fn](...m.args);
+    postMessage({ type: 'rowsDone' });
+  }
+};
+`;
+
+async function tryInitMT(){
+  if (!(self.crossOriginIsolated && typeof SharedArrayBuffer === 'function')) return null;
+  const binMT = Uint8Array.from(atob(B64_MT), c => c.charCodeAt(0));
+  const mem = new WebAssembly.Memory({ initial: MT_PAGES, maximum: MT_PAGES, shared: true });
+  const { instance } = await WebAssembly.instantiate(binMT, { env: { memory: mem } });
+  const ex = instance.exports;
+  const stackBase = ex.threadStackBase();
+  const n = Math.max(0, Math.min((navigator.hardwareConcurrency || 4) - 1, 7));
+  const url = URL.createObjectURL(new Blob([WORKER_SRC], { type: 'application/javascript' }));
+  const pool = [];
+  try {
+    for (let id = 0; id < n; id++) {
+      const wk = new Worker(url);
+      const ready = new Promise((resolve, reject) => {
+        wk.addEventListener('message', function h(ev){ if (ev.data.type==='ready'){ wk.removeEventListener('message', h); resolve(); } });
+        wk.addEventListener('error', reject, { once: true });
+      });
+      wk.postMessage({ type: 'init', bytes: binMT, mem, stackBase, id });
+      pool.push({ wk, ready });
+    }
+    await Promise.all(pool.map(p => p.ready));
+  } catch (err) {
+    pool.forEach(p => p.wk.terminate());
+    throw err;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+  return { e: ex, mem, workers: pool.map(p => p.wk) };
+}
+
+let e, mem = null, workers = [];
 try {
-  ({ instance: { exports: e } } = await WebAssembly.instantiate(bin));
-} catch (_) {
-  document.getElementById('err').style.display = 'grid';
-  return;
+  const mt = await tryInitMT();
+  if (mt) ({ e, mem, workers } = mt);
+} catch (err) {
+  console.error('MT init failed, falling back to single-threaded:', err);
+}
+const mtActive = !!mem;
+if (!mtActive) {
+  try {
+    const binST = Uint8Array.from(atob(B64), c => c.charCodeAt(0));
+    ({ instance: { exports: e } } = await WebAssembly.instantiate(binST));
+  } catch (_) {
+    document.getElementById('err').style.display = 'grid';
+    return;
+  }
 }
 const fbp = e.fb();
+const MEM = mtActive ? mem.buffer : e.memory.buffer;
+document.getElementById('badge').textContent =
+  `WASM32 + SIMD128 × 4-RAY PACKETS · ${mtActive ? `MT×${workers.length + 1}` : 'ST'}`;
+
+// rows are independent/deterministic, so this may be called from the main
+// thread and every worker concurrently once frameBegin() has been issued.
+// `fn` is the *RowsSteal export to drive (renderRowsSteal / renderMeshRowsSteal).
+function renderRowsMT(fn, h, args){
+  e.frameBegin(h);
+  const pending = workers.map(wk => new Promise(resolve => {
+    wk.addEventListener('message', function h2(ev){ if (ev.data.type==='rowsDone'){ wk.removeEventListener('message', h2); resolve(); } });
+  }));
+  for (const wk of workers) wk.postMessage({ type: 'go', fn, args });
+  e[fn](...args);   // main thread joins the row work-stealing too
+  return Promise.all(pending);
+}
+function renderSdfMT(t, az, el, dist, w, h){
+  e.renderPrep(t);
+  return renderRowsMT('renderRowsSteal', h, [az, el, dist, w, h]);
+}
+function renderMeshMT(az, el, dist, w, h){
+  e.meshPrep();
+  return renderRowsMT('renderMeshRowsSteal', h, [az, el, dist, w, h]);
+}
 
 // ---- per-dino material panel ----
 // e.mat(i, mode, refl, tran, ior, tex, gloss)  mode: 0 plain 1 texture 2 metal 3 acrylic
@@ -391,15 +480,15 @@ async function loadAll(){
     m.walkSpeed = GLB.gaitSpeed(m, animIndexFor(m,'Walk'));
     m.runSpeed  = GLB.gaitSpeed(m, m.runAnim);
   });
-  new Float32Array(e.memory.buffer, e.meshPos(),      pos.length).set(pos);
-  new Float32Array(e.memory.buffer, e.meshNormal(),   nrm.length).set(nrm);
-  new Int32Array  (e.memory.buffer, e.meshJoint(),    jnt.length).set(jnt);
-  new Float32Array(e.memory.buffer, e.meshWeight(),   wgt.length).set(wgt);
-  new Int32Array  (e.memory.buffer, e.meshIndex(),    idx.length).set(idx);
-  new Float32Array(e.memory.buffer, e.meshColor(),    col.length).set(col);
-  new Int32Array  (e.memory.buffer, e.meshTriModel(), tmdl.length).set(tmdl);
+  new Float32Array(MEM, e.meshPos(),      pos.length).set(pos);
+  new Float32Array(MEM, e.meshNormal(),   nrm.length).set(nrm);
+  new Int32Array  (MEM, e.meshJoint(),    jnt.length).set(jnt);
+  new Float32Array(MEM, e.meshWeight(),   wgt.length).set(wgt);
+  new Int32Array  (MEM, e.meshIndex(),    idx.length).set(idx);
+  new Float32Array(MEM, e.meshColor(),    col.length).set(col);
+  new Int32Array  (MEM, e.meshTriModel(), tmdl.length).set(tmdl);
   e.meshSetCounts(vb, tb, jb);
-  boneAll = new Float32Array(e.memory.buffer, e.meshBone(), jb*12);
+  boneAll = new Float32Array(MEM, e.meshBone(), jb*12);
   built = models;
   built.forEach((_,i)=>pushMeshMat(i));
   meshLoaded = true;
@@ -433,8 +522,13 @@ enterMesh(MESH_MODELS.indexOf('Velociraptor'));
 // それ以外は LV の固定インデックスに手動ロックする。
 const LV = [[320,180],[480,270],[640,360],[800,450],[960,540],[1120,630],[1280,720]];
 let lvl = 1, ema = 10, lastSwitch = 0;
-const imgs = LV.map(([w,h]) =>
-  new ImageData(new Uint8ClampedArray(e.memory.buffer, fbp, w*h*4), w, h));
+// zero-copy views straight onto the wasm framebuffer (ST mode); a
+// SharedArrayBuffer can't back an ImageData though, so MT mode instead gets
+// a plain per-level buffer that's memcpy'd from the shared fb each frame.
+const copyBufs = mtActive ? LV.map(([w,h]) => new Uint8ClampedArray(w*h*4)) : null;
+const imgs = LV.map(([w,h], i) => mtActive
+  ? new ImageData(copyBufs[i], w, h)
+  : new ImageData(new Uint8ClampedArray(MEM, fbp, w*h*4), w, h));
 const off = document.createElement('canvas');
 const octx = off.getContext('2d');
 
@@ -492,7 +586,7 @@ let hudAt = 0, frames = 0, fpsT0 = performance.now();
 
 // ---- main loop ----
 let t = 0, prev = performance.now();
-function frame(now){
+async function frame(now){
   const dt = Math.min((now - prev) / 1000, 0.05); prev = now;
   t += dt;
   if (now - lastTouch > 4000) az += dt * 0.10;   // auto orbit when idle
@@ -529,12 +623,18 @@ function frame(now){
       for (let j = 0; j < m.nj; j++) b[j*12+11] += zoff;   // rigid world-Z shift
       boneAll.set(b, m.jbase*12);
     }
-    e.renderMesh(az, el, dist, w, h);
+    if (mtActive) await renderMeshMT(az, el, dist, w, h);
+    else e.renderMesh(az, el, dist, w, h);
+  } else if (mtActive) {
+    await renderSdfMT(t, az, el, dist, w, h);
   } else {
     e.render(t, az, el, dist, w, h);
   }
   const rms = performance.now() - t0;
   ema = ema * 0.85 + rms * 0.15;
+  // copy while lvl still matches the (w,h) just rendered — the auto-res
+  // adjustment below may change lvl for the *next* frame
+  if (mtActive) copyBufs[lvl].set(new Uint8Array(MEM, fbp, w*h*4));
 
   if (resMode === 'auto' && now - lastSwitch > 800) {
     if (ema > 15 && lvl > 0)            { lvl--; lastSwitch = now; }
