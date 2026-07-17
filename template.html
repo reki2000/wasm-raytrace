@@ -73,7 +73,6 @@
   .slabel{font-size:9px;letter-spacing:.18em;color:var(--dim);margin:7px 0 5px}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:4px}
   .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px}
-  .grid4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4px}
   .pick{font:inherit;font-size:9px;letter-spacing:.05em;padding:5px 2px;
     background:transparent;border:1px solid var(--line);color:var(--dim);
     border-radius:2px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -81,6 +80,11 @@
   .pick:disabled{opacity:.4;cursor:default}
   #actionwrap{border-top:1px solid var(--line);padding-top:8px;margin-top:2px}
   #reswrap{border-top:1px solid var(--line);padding-top:8px;margin-top:2px}
+  #resrow{display:flex;align-items:center;gap:7px}
+  #resrow .pick{flex:none;padding:5px 8px}
+  #resrow input[type=range]{flex:1;accent-color:var(--acc);cursor:pointer;height:14px;margin:0}
+  #resrow.auto input[type=range]{opacity:.4}
+  #resVal{flex:none;width:30px;text-align:right;font-size:9px;color:var(--dim);letter-spacing:.04em}
 
   /* ---- model credit / license (always visible) ---- */
   #credit{position:fixed;right:18px;top:15px;z-index:6;text-align:right;
@@ -110,14 +114,18 @@
     <div id="scenehead">
       <div class="slabel">MODEL</div>
       <div class="grid2" id="scenesel"></div>
+      <div id="reswrap">
+        <div class="slabel">RESOLUTION</div>
+        <div id="resrow">
+          <button type="button" class="pick" id="autoBtn">AUTO</button>
+          <input type="range" id="resSlider" min="0" max="6" step="1">
+          <span id="resVal">AUTO</span>
+        </div>
+      </div>
       <div id="actionwrap" style="display:none">
         <div class="slabel">ACTION</div>
         <div class="grid3" id="actionsel"></div>
       </div>
-    </div>
-    <div id="reswrap">
-      <div class="slabel">RESOLUTION</div>
-      <div class="grid4" id="ressel"></div>
     </div>
     <div id="matwrap"></div>
     <div id="meshwrap"></div>
@@ -347,7 +355,6 @@ const meshAutoRun = MESH_MODELS.map(() => false); // auto-running to rejoin the 
 const $scenesel = document.getElementById('scenesel');
 const $actionwrap = document.getElementById('actionwrap');
 const $actionsel = document.getElementById('actionsel');
-const $ressel = document.getElementById('ressel');
 const $matwrap = document.getElementById('matwrap');
 const $meshwrap = document.getElementById('meshwrap');
 
@@ -373,13 +380,25 @@ ACTIONS.forEach(a => {
 });
 actionBtns[ACTIONS.indexOf('Walk')].el.classList.add('on');
 
-// ---- resolution presets (AUTO = adaptive, others = fixed step) ----
+// ---- resolution: AUTO toggle + horizontal slider over the 7 fixed steps ----
+const RES_STEP_LABELS = ['1×','1.5×','2×','2.5×','3×','3.5×','4×'];
 let resMode = 'auto';   // 'auto' | fixed LV index; declared before highlightRes() reads it
-const RES_LABELS = ['AUTO','1×','1.5×','2×','2.5×','3×','3.5×','4×'];
-const resBtns = RES_LABELS.map(label => mkPick($ressel, label));
-resBtns.forEach((b,i) => { b.onclick = () => { resMode = i===0 ? 'auto' : i-1; highlightRes(); }; });
+let resManualIdx = 1;   // last (or default) manual slider position, shown while AUTO is active
+const $resrow = document.getElementById('resrow');
+const $autoBtn = document.getElementById('autoBtn');
+const $resSlider = document.getElementById('resSlider');
+const $resVal = document.getElementById('resVal');
+$resSlider.max = RES_STEP_LABELS.length - 1;
+$autoBtn.onclick = () => { resMode = 'auto'; highlightRes(); };
+$resSlider.addEventListener('input', () => {
+  resManualIdx = +$resSlider.value; resMode = resManualIdx; highlightRes();
+});
 function highlightRes(){
-  resBtns.forEach((b,i) => b.classList.toggle('on', i===0 ? resMode==='auto' : resMode===i-1));
+  $autoBtn.classList.toggle('on', resMode === 'auto');
+  $resrow.classList.toggle('auto', resMode === 'auto');
+  const idx = resMode === 'auto' ? resManualIdx : resMode;
+  $resSlider.value = idx;
+  $resVal.textContent = resMode === 'auto' ? 'AUTO' : RES_STEP_LABELS[idx];
 }
 highlightRes();
 
