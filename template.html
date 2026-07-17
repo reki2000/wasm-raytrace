@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
@@ -36,8 +36,8 @@
 
   /* ---- material panel ---- */
   #panel{position:fixed;left:18px;top:84px;width:236px;z-index:5;
-    background:rgba(7,9,13,.84);border:1px solid var(--line);border-radius:4px;
-    backdrop-filter:blur(6px);max-height:calc(100% - 118px);overflow-y:auto;
+    background:rgba(7,9,13,.42);border:1px solid var(--line);border-radius:4px;
+    backdrop-filter:blur(3px);max-height:calc(100% - 118px);overflow-y:auto;
     scrollbar-width:thin}
   #phead{display:flex;align-items:center;justify-content:space-between;
     padding:8px 12px;cursor:pointer;user-select:none}
@@ -103,7 +103,7 @@
   <div class="badge" id="badge">WASM32 + SIMD128 × 4-RAY PACKETS</div>
 </div>
 <div id="hint">drag: orbit &nbsp;·&nbsp; wheel / pinch: zoom &nbsp;·&nbsp; panel: surface materials</div>
-<div id="credit">恐竜モデル: <a href="https://quaternius.com/packs/animateddinosaurs.html" target="_blank" rel="noopener">Quaternius</a> — Animated Dinosaur Pack · CC0 1.0</div>
+<div id="credit">Dinosaur models: <a href="https://quaternius.com/packs/animateddinosaurs.html" target="_blank" rel="noopener">Quaternius</a> — Animated Dinosaur Pack · CC0 1.0</div>
 <div id="panel">
   <div id="phead"><span>SCENE // DINO</span><b id="pfold">−</b></div>
   <div id="pbody">
@@ -123,8 +123,8 @@
     <div id="meshwrap"></div>
   </div>
 </div>
-<div id="err"><div>このデモには WebAssembly SIMD128 が必要です。<br>
-Chrome 91+ / Firefox 89+ / Safari 16.4+ で開いてください。</div></div>
+<div id="err"><div>This demo requires WebAssembly SIMD128.<br>
+Please open it in Chrome 91+ / Firefox 89+ / Safari 16.4+.</div></div>
 
 <script src="glb.js"></script>
 <script>
@@ -238,19 +238,19 @@ const DINOS = [
   { name:'STEGOSAURUS', color:'#96551f' },
   { name:'TRICERATOPS', color:'#70755f' },
 ];
-const MODE_LABELS = ['ノーマル','テクスチャ','金属反射','アクリル'];
+const MODE_LABELS = ['NORMAL','TEXTURE','METAL','ACRYLIC'];
 const PARAMS = {
-  tex:  { label:'模様',   min:0,   max:1, step:0.01, def:1.00 },
-  refl: { label:'反射率', min:0,   max:1, step:0.01, def:0.50 },
-  gloss:{ label:'光沢',   min:0,   max:1, step:0.01, def:0.50 },
-  tran: { label:'透過率', min:0,   max:1, step:0.01, def:0.65 },
-  ior:  { label:'屈折率', min:1.0, max:2.0, step:0.01, def:1.49 },
+  tex:  { label:'TEX',   min:0,   max:1, step:0.01, def:1.00 },
+  refl: { label:'REFL',  min:0,   max:1, step:0.01, def:0.50 },
+  gloss:{ label:'GLOSS', min:0,   max:1, step:0.01, def:0.50 },
+  tran: { label:'TRAN',  min:0,   max:1, step:0.01, def:0.65 },
+  ior:  { label:'IOR',   min:1.0, max:2.0, step:0.01, def:1.49 },
 };
 const MODE_PARAMS = [               // sliders shown per mode
-  ['refl','gloss'],                 // ノーマル
-  ['tex','refl','gloss'],           // テクスチャ
-  ['refl','gloss'],                 // 金属反射
-  ['tran','ior','refl'],            // アクリル
+  ['refl','gloss'],                 // normal
+  ['tex','refl','gloss'],           // texture
+  ['refl','gloss'],                 // metal
+  ['tran','ior','refl'],            // acrylic
 ];
 const mstate = DINOS.map(() => {
   const s = { mode:1 };
@@ -415,7 +415,7 @@ function buildMeshCard(){
     modes.appendChild(b); modeBtns.push(b);
   });
   const smoothBtn=document.createElement('button'); smoothBtn.type='button'; smoothBtn.className='pick';
-  smoothBtn.style.width='100%'; smoothBtn.style.marginBottom='9px'; smoothBtn.textContent='法線溶接';
+  smoothBtn.style.width='100%'; smoothBtn.style.marginBottom='9px'; smoothBtn.textContent='SMOOTH SHADING';
   smoothBtn.onclick=()=>{ meshState[focusIndex].smooth=!meshState[focusIndex].smooth; refreshMeshCard(); pushMeshMat(focusIndex); };
   const sliders = document.createElement('div'); sliders.className='sliders';
   const slEls = {};
@@ -518,8 +518,8 @@ function selectAction(a){
 enterMesh(MESH_MODELS.indexOf('Velociraptor'));
 
 // ---- adaptive resolution ----
-// 1x〜4x (辺の長さ基準) を 0.5x 刻みで7段階。resMode='auto' は自動昇降、
-// それ以外は LV の固定インデックスに手動ロックする。
+// 7 steps from 1x-4x (by edge length) in 0.5x increments. resMode='auto'
+// adjusts automatically; otherwise it locks to a fixed index into LV.
 const LV = [[320,180],[480,270],[640,360],[800,450],[960,540],[1120,630],[1280,720]];
 let lvl = 1, ema = 10, lastSwitch = 0;
 // zero-copy views straight onto the wasm framebuffer (ST mode); a
