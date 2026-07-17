@@ -246,9 +246,9 @@ function renderMeshMT(az, el, dist, w, h){
 // ---- per-dino material panel ----
 // e.mat(i, mode, refl, tran, ior, tex, gloss)  mode: 0 plain 1 texture 2 metal 3 acrylic
 const DINOS = [
-  { name:'THEROPOD',    color:'#4a8a3c' },
-  { name:'STEGOSAURUS', color:'#96551f' },
-  { name:'TRICERATOPS', color:'#70755f' },
+  { name:'THEROPOD' },
+  { name:'STEGOSAURUS' },
+  { name:'TRICERATOPS' },
 ];
 const MODE_LABELS = ['NORMAL','TEXTURE','METAL','ACRYLIC'];
 const PARAMS = {
@@ -274,57 +274,54 @@ function pushMat(i){
   const tex = s.mode === 1 ? s.tex : 0;   // pattern only in texture mode
   e.mat(i, s.mode, s.refl, s.tran, s.ior, tex, s.gloss);
 }
-const cards = [];
-const $pb = document.getElementById('matwrap');
-DINOS.forEach((d, i) => {
+
+// ---- SDF material card (single card, follows the focused SDF dino) ----
+let sdfFocus = 0;
+let sdfCard = null;
+function buildSdfCard(){
+  const $pb = document.getElementById('matwrap');
   const card = document.createElement('div'); card.className = 'dcard';
-  const nm = document.createElement('div'); nm.className = 'dname';
-  const ch = document.createElement('span'); ch.className = 'chip';
-  ch.style.background = d.color;
-  nm.append(ch, d.name);
   const modes = document.createElement('div'); modes.className = 'modes';
+  const modeBtns = [];
   MODE_LABELS.forEach((label, mv) => {
-    const b = document.createElement('button');
-    b.type = 'button'; b.textContent = label;
-    b.onclick = () => {
-      mstate[i].mode = mv;
-      [...modes.children].forEach((x, j) => x.classList.toggle('on', j === mv));
-      showSliders(i); pushMat(i);
-    };
-    modes.appendChild(b);
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = label;
+    b.onclick = () => { mstate[sdfFocus].mode = mv; refreshSdfCard(); pushMat(sdfFocus); };
+    modes.appendChild(b); modeBtns.push(b);
   });
   const sliders = document.createElement('div'); sliders.className = 'sliders';
+  const slEls = {};
   for (const key in PARAMS){
     const p = PARAMS[key];
     const w = document.createElement('div'); w.className = 'sl'; w.dataset.k = key;
     const r = document.createElement('input');
     r.type = 'range'; r.min = p.min; r.max = p.max; r.step = p.step; r.value = p.def;
     r.setAttribute('orient', 'vertical');           // firefox
-    const val = document.createElement('div'); val.className = 'val';
-    val.textContent = p.def.toFixed(2);
-    const lab = document.createElement('div'); lab.className = 'lab';
-    lab.textContent = p.label;
+    const val = document.createElement('div'); val.className = 'val'; val.textContent = p.def.toFixed(2);
+    const lab = document.createElement('div'); lab.className = 'lab'; lab.textContent = p.label;
     r.addEventListener('input', () => {
-      mstate[i][key] = +r.value;
+      mstate[sdfFocus][key] = +r.value;
       val.textContent = (+r.value).toFixed(2);
-      pushMat(i);
+      pushMat(sdfFocus);
     });
-    w.append(r, val, lab);
-    sliders.appendChild(w);
+    w.append(r, val, lab); sliders.appendChild(w); slEls[key] = { r, val, w };
   }
-  card.append(nm, modes, sliders);
-  $pb.appendChild(card);
-  cards.push({ modes, sliders });
-});
-function showSliders(i){
-  const show = MODE_PARAMS[mstate[i].mode];
-  for (const w of cards[i].sliders.children)
-    w.classList.toggle('show', show.includes(w.dataset.k));
+  card.append(modes, sliders); $pb.appendChild(card);
+  sdfCard = { modeBtns, slEls };
 }
-DINOS.forEach((_, i) => {
-  cards[i].modes.children[mstate[i].mode].classList.add('on');
-  showSliders(i); pushMat(i);
-});
+function refreshSdfCard(){
+  if (!sdfCard) return;
+  const s = mstate[sdfFocus];
+  sdfCard.modeBtns.forEach((b, j) => b.classList.toggle('on', j === s.mode));
+  const show = MODE_PARAMS[s.mode];
+  for (const key in sdfCard.slEls){
+    const el = sdfCard.slEls[key];
+    el.r.value = s[key]; el.val.textContent = (+s[key]).toFixed(2);
+    el.w.classList.toggle('show', show.includes(key));
+  }
+}
+buildSdfCard();
+DINOS.forEach((_, i) => pushMat(i));   // apply default material to all 3 herd members
+refreshSdfCard();
 const $panel = document.getElementById('panel');
 const $fold = document.getElementById('pfold');
 document.getElementById('phead').onclick = () => {
@@ -367,9 +364,11 @@ function mkPick(parent, label){
   parent.appendChild(b); return b;
 }
 const sceneBtns = [];
-const sdfBtn = mkPick($scenesel, 'SDF HERD');
-sdfBtn.onclick = () => selectSdf();
-sceneBtns.push({el:sdfBtn, key:'sdf'});
+DINOS.forEach((d,i) => {
+  const b = mkPick($scenesel, 'SDF ' + d.name);
+  b.onclick = () => selectSdf(i);
+  sceneBtns.push({el:b, key:'sdf'+i});
+});
 MESH_MODELS.forEach((name,i) => {
   const b = mkPick($scenesel, name.toUpperCase());
   b.onclick = () => enterMesh(i);
@@ -512,16 +511,17 @@ async function loadAll(){
 }
 function ensureLoaded(){ return loadPromise || (loadPromise = loadAll()); }
 
-function selectSdf(){
-  sceneMode='sdf'; highlightScene('sdf');
+function selectSdf(i){
+  sceneMode='sdf'; sdfFocus=i; highlightScene('sdf'+i);
   $actionwrap.style.display='none'; $meshwrap.style.display='none'; $matwrap.style.display='';
+  refreshSdfCard();
 }
 async function enterMesh(i){
   focusIndex=i; highlightScene(MESH_MODELS[i]);
   $matwrap.style.display='none'; $meshwrap.style.display=''; $actionwrap.style.display='';
   refreshMeshCard();
   try { await ensureLoaded(); } catch(err){ console.error('model load failed:', err); return; }
-  if (!sceneBtns[i+1].el.classList.contains('on')) return;   // focus changed while loading
+  if (!sceneBtns[DINOS.length+i].el.classList.contains('on')) return;   // focus changed while loading
   if (sceneMode!=='mesh'){ focusXCur = built[focusIndex].slotX; focusZCur = meshTravel[focusIndex]; }
   sceneMode='mesh'; highlightAction(); refreshMeshCard();
 }

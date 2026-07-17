@@ -70,10 +70,10 @@
 | 機能 | 実装箇所 | 仕組み |
 |---|---|---|
 | メインループ | `frame()` | rAF 駆動。`render()` の実測 ms を EMA 平滑化(変数 `ema`) |
-| 解像度 | `LV` 配列 + `frame()` 内の切替判定 + パネルの RESOLUTION プリセット | 320×180(1x)〜1280×720(4x)を0.5x刻みで7段階。既定は AUTO(EMA>15ms で降格、<7.5ms で昇格、切替は800ms間隔)。プリセットボタンで固定解像度に手動ロックも可能(`resMode`) |
+| 解像度 | `LV` 配列 + `frame()` 内の切替判定 + パネルの RESOLUTION(AUTO ボタン + 横スライダ) | 320×180(1x)〜1280×720(4x)を0.5x刻みで7段階。既定は AUTO(EMA>15ms で降格、<7.5ms で昇格、切替は800ms間隔)。スライダ操作で固定解像度に手動ロックも可能(`resMode`) |
 | 表示スケーリング | `frame()` 末尾 | オフスクリーン canvas に putImageData → cover-fit で `drawImage`(`image-rendering:pixelated`) |
 | カメラ操作 | `pointerdown` / `pointermove` / `wheel` / `touchmove` の各ハンドラ | drag=orbit(az/el)、wheel/pinch=zoom。4秒無操作で自動オービット(`frame()` 内の `lastTouch` 判定) |
-| マテリアルパネル | `DINOS` / `PARAMS` の定義とカード生成ループ、`pushMat()` / `showSliders()` | 恐竜ごとのカード(モード4ボタン + 縦型スライダ)。変更のたびに `pushMat()` が `e.mat()` を呼ぶだけで、次フレームから反映 |
+| マテリアルパネル | `DINOS` / `PARAMS` の定義、`buildSdfCard()` / `refreshSdfCard()`、`pushMat()` | SDF 群れ3体は常に同時描画されるが、編集対象は MODEL の **SDF THEROPOD/STEGOSAURUS/TRICERATOPS** ボタンで選ぶ1体のみ(`sdfFocus`)。カードは1枚だけを使い回し(モード4ボタン + 縦型スライダ)、メッシュ側の `buildMeshCard()` と同じ構造。変更のたびに `pushMat()` が `e.mat()` を呼ぶだけで、次フレームから反映 |
 | HUD | `frame()` 内の 500ms ごとの更新ブロック | fps / 解像度 / ms を表示 |
 
 ### 3. SIMD 基盤とデータ構造(`vec.h`)

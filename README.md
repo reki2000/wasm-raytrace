@@ -17,13 +17,13 @@ models (6 species).
 ## Usage
 
 - Drag: orbit the camera / Wheel or pinch: zoom
-- Left panel: adjust each dinosaur's material (normal / textured / metallic
-  reflective / acrylic translucent) and reflectivity, transmittance,
-  refractive index, etc. in real time
-- **MODEL** button: switch to the Quaternius mesh dinosaurs (T-Rex /
-  Velociraptor / Triceratops / Stegosaurus / Parasaurolophus /
-  Apatosaurus) and pick an ACTION (Idle/Walk/Run/Attack/Jump/Death)
-- **SDF HERD** button: return to the original SDF herd view
+- **MODEL** buttons: **SDF THEROPOD / STEGOSAURUS / TRICERATOPS** pick which
+  SDF dinosaur the panel below edits (all three still render together as a
+  herd); the six Quaternius names switch to the mesh dinosaurs and add an
+  ACTION picker (Idle/Walk/Run/Attack/Jump/Death)
+- **MATERIAL** panel: adjust the selected dinosaur's material (normal /
+  textured / metallic reflective / acrylic translucent) and reflectivity,
+  transmittance, refractive index, etc. in real time
 
 ## Requirements
 

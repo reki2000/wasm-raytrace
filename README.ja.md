@@ -16,12 +16,12 @@ GPU を使わず、CPU の wasm だけで恐竜の群れを描画します。Qua
 ## 操作方法
 
 - ドラッグ: カメラの周回(オービット) / ホイール・ピンチ: ズーム
-- 左パネル: 恐竜ごとにマテリアル(ノーマル / テクスチャ / 金属反射 / アクリル半透明)と
-  反射率・透過率・屈折率などをリアルタイムに調整
-- **MODEL** ボタン: Quaternius メッシュ恐竜(T-Rex / Velociraptor / Triceratops /
-  Stegosaurus / Parasaurolophus / Apatosaurus)に切り替え、ACTION(Idle/Walk/Run/
-  Attack/Jump/Death)を選択可能
-- **SDF HERD** ボタン: 元の SDF 群れ表示に戻る
+- **MODEL** ボタン: **SDF THEROPOD / STEGOSAURUS / TRICERATOPS** で下の
+  マテリアルパネルの編集対象を切り替え(3体は常に群れとして一緒に描画される)。
+  Quaternius の6体名を選ぶとメッシュ恐竜に切り替わり、ACTION(Idle/Walk/Run/
+  Attack/Jump/Death)も選択可能になる
+- **MATERIAL** パネル: 選択中の恐竜のマテリアル(ノーマル / テクスチャ / 金属反射 /
+  アクリル半透明)と反射率・透過率・屈折率などをリアルタイムに調整
 
 ## 必要ツール
 
