@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
@@ -36,8 +36,8 @@
 
   /* ---- material panel ---- */
   #panel{position:fixed;left:18px;top:84px;width:236px;z-index:5;
-    background:rgba(7,9,13,.84);border:1px solid var(--line);border-radius:4px;
-    backdrop-filter:blur(6px);max-height:calc(100% - 118px);overflow-y:auto;
+    background:rgba(7,9,13,.42);border:1px solid var(--line);border-radius:4px;
+    backdrop-filter:blur(3px);max-height:calc(100% - 118px);overflow-y:auto;
     scrollbar-width:thin}
   #phead{display:flex;align-items:center;justify-content:space-between;
     padding:8px 12px;cursor:pointer;user-select:none}
@@ -62,8 +62,9 @@
     -webkit-appearance:slider-vertical;
     writing-mode:vertical-lr;direction:rtl;
     width:20px;height:86px;accent-color:var(--acc);cursor:pointer;margin:0}
-  .sl .val{font-size:9px;color:var(--ink);letter-spacing:.04em}
-  .sl .lab{font-size:9px;color:var(--dim);letter-spacing:.06em;white-space:nowrap}
+  .sl .val{font-size:9px;color:var(--ink);letter-spacing:.04em;text-shadow:0 1px 2px rgba(0,0,0,.85)}
+  .sl .lab{font-size:9px;color:var(--ink);opacity:.8;letter-spacing:.06em;white-space:nowrap;
+    text-shadow:0 1px 2px rgba(0,0,0,.85)}
   @media (max-width:640px){
     #panel{left:10px;top:72px;width:212px}
   }
@@ -73,7 +74,6 @@
   .slabel{font-size:9px;letter-spacing:.18em;color:var(--dim);margin:7px 0 5px}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:4px}
   .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px}
-  .grid4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4px}
   .pick{font:inherit;font-size:9px;letter-spacing:.05em;padding:5px 2px;
     background:transparent;border:1px solid var(--line);color:var(--dim);
     border-radius:2px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -81,6 +81,13 @@
   .pick:disabled{opacity:.4;cursor:default}
   #actionwrap{border-top:1px solid var(--line);padding-top:8px;margin-top:2px}
   #reswrap{border-top:1px solid var(--line);padding-top:8px;margin-top:2px}
+  #materialhead{border-top:1px solid var(--line);padding-top:8px;margin-top:2px}
+  #matwrap .dcard:first-child, #meshwrap .dcard:first-child{border-top:none;padding-top:0}
+  #resrow{display:flex;align-items:center;gap:7px}
+  #resrow .pick{flex:none;padding:5px 8px}
+  #resrow input[type=range]{flex:1;accent-color:var(--acc);cursor:pointer;height:14px;margin:0}
+  #resrow.auto input[type=range]{opacity:.4}
+  #resVal{flex:none;width:30px;text-align:right;font-size:9px;color:var(--dim);letter-spacing:.04em}
 
   /* ---- model credit / license (always visible) ---- */
   #credit{position:fixed;right:18px;top:15px;z-index:6;text-align:right;
@@ -103,28 +110,33 @@
   <div class="badge" id="badge">WASM32 + SIMD128 × 4-RAY PACKETS</div>
 </div>
 <div id="hint">drag: orbit &nbsp;·&nbsp; wheel / pinch: zoom &nbsp;·&nbsp; panel: surface materials</div>
-<div id="credit">恐竜モデル: <a href="https://quaternius.com/packs/animateddinosaurs.html" target="_blank" rel="noopener">Quaternius</a> — Animated Dinosaur Pack · CC0 1.0</div>
+<div id="credit">Dinosaur models: <a href="https://quaternius.com/packs/animateddinosaurs.html" target="_blank" rel="noopener">Quaternius</a> — Animated Dinosaur Pack · CC0 1.0</div>
 <div id="panel">
   <div id="phead"><span>SCENE // DINO</span><b id="pfold">−</b></div>
   <div id="pbody">
     <div id="scenehead">
       <div class="slabel">MODEL</div>
       <div class="grid2" id="scenesel"></div>
+      <div id="reswrap">
+        <div class="slabel">RESOLUTION</div>
+        <div id="resrow">
+          <button type="button" class="pick" id="autoBtn">AUTO</button>
+          <input type="range" id="resSlider" min="0" max="6" step="1">
+          <span id="resVal">AUTO</span>
+        </div>
+      </div>
       <div id="actionwrap" style="display:none">
         <div class="slabel">ACTION</div>
         <div class="grid3" id="actionsel"></div>
       </div>
     </div>
-    <div id="reswrap">
-      <div class="slabel">RESOLUTION</div>
-      <div class="grid4" id="ressel"></div>
-    </div>
+    <div id="materialhead"><div class="slabel">MATERIAL</div></div>
     <div id="matwrap"></div>
     <div id="meshwrap"></div>
   </div>
 </div>
-<div id="err"><div>このデモには WebAssembly SIMD128 が必要です。<br>
-Chrome 91+ / Firefox 89+ / Safari 16.4+ で開いてください。</div></div>
+<div id="err"><div>This demo requires WebAssembly SIMD128.<br>
+Please open it in Chrome 91+ / Firefox 89+ / Safari 16.4+.</div></div>
 
 <script src="glb.js"></script>
 <script>
@@ -234,23 +246,23 @@ function renderMeshMT(az, el, dist, w, h){
 // ---- per-dino material panel ----
 // e.mat(i, mode, refl, tran, ior, tex, gloss)  mode: 0 plain 1 texture 2 metal 3 acrylic
 const DINOS = [
-  { name:'THEROPOD',    color:'#4a8a3c' },
-  { name:'STEGOSAURUS', color:'#96551f' },
-  { name:'TRICERATOPS', color:'#70755f' },
+  { name:'THEROPOD' },
+  { name:'STEGOSAURUS' },
+  { name:'TRICERATOPS' },
 ];
-const MODE_LABELS = ['ノーマル','テクスチャ','金属反射','アクリル'];
+const MODE_LABELS = ['NORMAL','TEXTURE','METAL','ACRYLIC'];
 const PARAMS = {
-  tex:  { label:'模様',   min:0,   max:1, step:0.01, def:1.00 },
-  refl: { label:'反射率', min:0,   max:1, step:0.01, def:0.50 },
-  gloss:{ label:'光沢',   min:0,   max:1, step:0.01, def:0.50 },
-  tran: { label:'透過率', min:0,   max:1, step:0.01, def:0.65 },
-  ior:  { label:'屈折率', min:1.0, max:2.0, step:0.01, def:1.49 },
+  tex:  { label:'TEX',   min:0,   max:1, step:0.01, def:1.00 },
+  refl: { label:'REFL',  min:0,   max:1, step:0.01, def:0.50 },
+  gloss:{ label:'GLOSS', min:0,   max:1, step:0.01, def:0.50 },
+  tran: { label:'TRAN',  min:0,   max:1, step:0.01, def:0.65 },
+  ior:  { label:'IOR',   min:1.0, max:2.0, step:0.01, def:1.49 },
 };
 const MODE_PARAMS = [               // sliders shown per mode
-  ['refl','gloss'],                 // ノーマル
-  ['tex','refl','gloss'],           // テクスチャ
-  ['refl','gloss'],                 // 金属反射
-  ['tran','ior','refl'],            // アクリル
+  ['refl','gloss'],                 // normal
+  ['tex','refl','gloss'],           // texture
+  ['refl','gloss'],                 // metal
+  ['tran','ior','refl'],            // acrylic
 ];
 const mstate = DINOS.map(() => {
   const s = { mode:1 };
@@ -262,57 +274,54 @@ function pushMat(i){
   const tex = s.mode === 1 ? s.tex : 0;   // pattern only in texture mode
   e.mat(i, s.mode, s.refl, s.tran, s.ior, tex, s.gloss);
 }
-const cards = [];
-const $pb = document.getElementById('matwrap');
-DINOS.forEach((d, i) => {
+
+// ---- SDF material card (single card, follows the focused SDF dino) ----
+let sdfFocus = 0;
+let sdfCard = null;
+function buildSdfCard(){
+  const $pb = document.getElementById('matwrap');
   const card = document.createElement('div'); card.className = 'dcard';
-  const nm = document.createElement('div'); nm.className = 'dname';
-  const ch = document.createElement('span'); ch.className = 'chip';
-  ch.style.background = d.color;
-  nm.append(ch, d.name);
   const modes = document.createElement('div'); modes.className = 'modes';
+  const modeBtns = [];
   MODE_LABELS.forEach((label, mv) => {
-    const b = document.createElement('button');
-    b.type = 'button'; b.textContent = label;
-    b.onclick = () => {
-      mstate[i].mode = mv;
-      [...modes.children].forEach((x, j) => x.classList.toggle('on', j === mv));
-      showSliders(i); pushMat(i);
-    };
-    modes.appendChild(b);
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = label;
+    b.onclick = () => { mstate[sdfFocus].mode = mv; refreshSdfCard(); pushMat(sdfFocus); };
+    modes.appendChild(b); modeBtns.push(b);
   });
   const sliders = document.createElement('div'); sliders.className = 'sliders';
+  const slEls = {};
   for (const key in PARAMS){
     const p = PARAMS[key];
     const w = document.createElement('div'); w.className = 'sl'; w.dataset.k = key;
     const r = document.createElement('input');
     r.type = 'range'; r.min = p.min; r.max = p.max; r.step = p.step; r.value = p.def;
     r.setAttribute('orient', 'vertical');           // firefox
-    const val = document.createElement('div'); val.className = 'val';
-    val.textContent = p.def.toFixed(2);
-    const lab = document.createElement('div'); lab.className = 'lab';
-    lab.textContent = p.label;
+    const val = document.createElement('div'); val.className = 'val'; val.textContent = p.def.toFixed(2);
+    const lab = document.createElement('div'); lab.className = 'lab'; lab.textContent = p.label;
     r.addEventListener('input', () => {
-      mstate[i][key] = +r.value;
+      mstate[sdfFocus][key] = +r.value;
       val.textContent = (+r.value).toFixed(2);
-      pushMat(i);
+      pushMat(sdfFocus);
     });
-    w.append(r, val, lab);
-    sliders.appendChild(w);
+    w.append(r, val, lab); sliders.appendChild(w); slEls[key] = { r, val, w };
   }
-  card.append(nm, modes, sliders);
-  $pb.appendChild(card);
-  cards.push({ modes, sliders });
-});
-function showSliders(i){
-  const show = MODE_PARAMS[mstate[i].mode];
-  for (const w of cards[i].sliders.children)
-    w.classList.toggle('show', show.includes(w.dataset.k));
+  card.append(modes, sliders); $pb.appendChild(card);
+  sdfCard = { modeBtns, slEls };
 }
-DINOS.forEach((_, i) => {
-  cards[i].modes.children[mstate[i].mode].classList.add('on');
-  showSliders(i); pushMat(i);
-});
+function refreshSdfCard(){
+  if (!sdfCard) return;
+  const s = mstate[sdfFocus];
+  sdfCard.modeBtns.forEach((b, j) => b.classList.toggle('on', j === s.mode));
+  const show = MODE_PARAMS[s.mode];
+  for (const key in sdfCard.slEls){
+    const el = sdfCard.slEls[key];
+    el.r.value = s[key]; el.val.textContent = (+s[key]).toFixed(2);
+    el.w.classList.toggle('show', show.includes(key));
+  }
+}
+buildSdfCard();
+DINOS.forEach((_, i) => pushMat(i));   // apply default material to all 3 herd members
+refreshSdfCard();
 const $panel = document.getElementById('panel');
 const $fold = document.getElementById('pfold');
 document.getElementById('phead').onclick = () => {
@@ -323,7 +332,6 @@ if (innerWidth < 640) { $panel.classList.add('min'); $fold.textContent = '+'; }
 
 // ---- scene: SDF herd vs Quaternius glTF line-up ----
 const MESH_MODELS = ['T-Rex','Velociraptor','Triceratops','Stegosaurus','Parasaurolophus','Apatosaurus'];
-const MESH_COLORS = ['#6f8a44','#8a6a45','#585a68','#7c5a33','#7f8a55','#4d6a55'];
 const ACTIONS = ['Idle','Walk','Run','Attack','Jump','Death'];
 const SPACING = 3.4;      // spacing of the line-up along X
 // The models face +Z, so walking/running advances them along +Z on the ground.
@@ -347,7 +355,6 @@ const meshAutoRun = MESH_MODELS.map(() => false); // auto-running to rejoin the 
 const $scenesel = document.getElementById('scenesel');
 const $actionwrap = document.getElementById('actionwrap');
 const $actionsel = document.getElementById('actionsel');
-const $ressel = document.getElementById('ressel');
 const $matwrap = document.getElementById('matwrap');
 const $meshwrap = document.getElementById('meshwrap');
 
@@ -357,9 +364,11 @@ function mkPick(parent, label){
   parent.appendChild(b); return b;
 }
 const sceneBtns = [];
-const sdfBtn = mkPick($scenesel, 'SDF HERD');
-sdfBtn.onclick = () => selectSdf();
-sceneBtns.push({el:sdfBtn, key:'sdf'});
+DINOS.forEach((d,i) => {
+  const b = mkPick($scenesel, 'SDF ' + d.name);
+  b.onclick = () => selectSdf(i);
+  sceneBtns.push({el:b, key:'sdf'+i});
+});
 MESH_MODELS.forEach((name,i) => {
   const b = mkPick($scenesel, name.toUpperCase());
   b.onclick = () => enterMesh(i);
@@ -373,13 +382,25 @@ ACTIONS.forEach(a => {
 });
 actionBtns[ACTIONS.indexOf('Walk')].el.classList.add('on');
 
-// ---- resolution presets (AUTO = adaptive, others = fixed step) ----
+// ---- resolution: AUTO toggle + horizontal slider over the 7 fixed steps ----
+const RES_STEP_LABELS = ['1×','1.5×','2×','2.5×','3×','3.5×','4×'];
 let resMode = 'auto';   // 'auto' | fixed LV index; declared before highlightRes() reads it
-const RES_LABELS = ['AUTO','1×','1.5×','2×','2.5×','3×','3.5×','4×'];
-const resBtns = RES_LABELS.map(label => mkPick($ressel, label));
-resBtns.forEach((b,i) => { b.onclick = () => { resMode = i===0 ? 'auto' : i-1; highlightRes(); }; });
+let resManualIdx = 1;   // last (or default) manual slider position, shown while AUTO is active
+const $resrow = document.getElementById('resrow');
+const $autoBtn = document.getElementById('autoBtn');
+const $resSlider = document.getElementById('resSlider');
+const $resVal = document.getElementById('resVal');
+$resSlider.max = RES_STEP_LABELS.length - 1;
+$autoBtn.onclick = () => { resMode = 'auto'; highlightRes(); };
+$resSlider.addEventListener('input', () => {
+  resManualIdx = +$resSlider.value; resMode = resManualIdx; highlightRes();
+});
 function highlightRes(){
-  resBtns.forEach((b,i) => b.classList.toggle('on', i===0 ? resMode==='auto' : resMode===i-1));
+  $autoBtn.classList.toggle('on', resMode === 'auto');
+  $resrow.classList.toggle('auto', resMode === 'auto');
+  const idx = resMode === 'auto' ? resManualIdx : resMode;
+  $resSlider.value = idx;
+  $resVal.textContent = resMode === 'auto' ? 'AUTO' : RES_STEP_LABELS[idx];
 }
 highlightRes();
 
@@ -404,9 +425,9 @@ function animIndexFor(model, action){
 let meshCard = null;
 function buildMeshCard(){
   const card = document.createElement('div'); card.className='dcard';
-  const nm = document.createElement('div'); nm.className='dname';
-  const ch = document.createElement('span'); ch.className='chip';
-  const title = document.createElement('span'); nm.append(ch, title);
+  const smoothBtn=document.createElement('button'); smoothBtn.type='button'; smoothBtn.className='pick';
+  smoothBtn.style.width='100%'; smoothBtn.style.marginBottom='9px'; smoothBtn.textContent='SMOOTH SHADING';
+  smoothBtn.onclick=()=>{ meshState[focusIndex].smooth=!meshState[focusIndex].smooth; refreshMeshCard(); pushMeshMat(focusIndex); };
   const modes = document.createElement('div'); modes.className='modes';
   const modeBtns = [];
   MODE_LABELS.forEach((label,mv)=>{
@@ -414,9 +435,6 @@ function buildMeshCard(){
     b.onclick=()=>{ meshState[focusIndex].mode=mv; refreshMeshCard(); pushMeshMat(focusIndex); };
     modes.appendChild(b); modeBtns.push(b);
   });
-  const smoothBtn=document.createElement('button'); smoothBtn.type='button'; smoothBtn.className='pick';
-  smoothBtn.style.width='100%'; smoothBtn.style.marginBottom='9px'; smoothBtn.textContent='法線溶接';
-  smoothBtn.onclick=()=>{ meshState[focusIndex].smooth=!meshState[focusIndex].smooth; refreshMeshCard(); pushMeshMat(focusIndex); };
   const sliders = document.createElement('div'); sliders.className='sliders';
   const slEls = {};
   for (const key in PARAMS){
@@ -429,14 +447,12 @@ function buildMeshCard(){
     r.addEventListener('input',()=>{ meshState[focusIndex][key]=+r.value; val.textContent=(+r.value).toFixed(2); pushMeshMat(focusIndex); });
     w.append(r,val,lab); sliders.appendChild(w); slEls[key]={r,val,w};
   }
-  card.append(nm,modes,smoothBtn,sliders); $meshwrap.appendChild(card);
-  meshCard = {title,chip:ch,modeBtns,smoothBtn,slEls};
+  card.append(smoothBtn,modes,sliders); $meshwrap.appendChild(card);
+  meshCard = {modeBtns,smoothBtn,slEls};
 }
 function refreshMeshCard(){
   if(!meshCard) return;
   const s=meshState[focusIndex];
-  meshCard.title.textContent=MESH_MODELS[focusIndex].toUpperCase();
-  meshCard.chip.style.background=MESH_COLORS[focusIndex];
   meshCard.modeBtns.forEach((b,j)=>b.classList.toggle('on', j===s.mode));
   meshCard.smoothBtn.classList.toggle('on', s.smooth);
   const show=MODE_PARAMS[s.mode];
@@ -495,16 +511,17 @@ async function loadAll(){
 }
 function ensureLoaded(){ return loadPromise || (loadPromise = loadAll()); }
 
-function selectSdf(){
-  sceneMode='sdf'; highlightScene('sdf');
+function selectSdf(i){
+  sceneMode='sdf'; sdfFocus=i; highlightScene('sdf'+i);
   $actionwrap.style.display='none'; $meshwrap.style.display='none'; $matwrap.style.display='';
+  refreshSdfCard();
 }
 async function enterMesh(i){
   focusIndex=i; highlightScene(MESH_MODELS[i]);
   $matwrap.style.display='none'; $meshwrap.style.display=''; $actionwrap.style.display='';
   refreshMeshCard();
   try { await ensureLoaded(); } catch(err){ console.error('model load failed:', err); return; }
-  if (!sceneBtns[i+1].el.classList.contains('on')) return;   // focus changed while loading
+  if (!sceneBtns[DINOS.length+i].el.classList.contains('on')) return;   // focus changed while loading
   if (sceneMode!=='mesh'){ focusXCur = built[focusIndex].slotX; focusZCur = meshTravel[focusIndex]; }
   sceneMode='mesh'; highlightAction(); refreshMeshCard();
 }
@@ -518,8 +535,8 @@ function selectAction(a){
 enterMesh(MESH_MODELS.indexOf('Velociraptor'));
 
 // ---- adaptive resolution ----
-// 1x〜4x (辺の長さ基準) を 0.5x 刻みで7段階。resMode='auto' は自動昇降、
-// それ以外は LV の固定インデックスに手動ロックする。
+// 7 steps from 1x-4x (by edge length) in 0.5x increments. resMode='auto'
+// adjusts automatically; otherwise it locks to a fixed index into LV.
 const LV = [[320,180],[480,270],[640,360],[800,450],[960,540],[1120,630],[1280,720]];
 let lvl = 1, ema = 10, lastSwitch = 0;
 // zero-copy views straight onto the wasm framebuffer (ST mode); a
