@@ -1,7 +1,5 @@
 # DINO // RT HERD — wasm SIMD128 ray-marched dinosaur herd
 
-[日本語](README.ja.md)
-
 A dependency-free, real-time SDF ray-marched dinosaur demo powered by
 WebAssembly SIMD128. No GPU is used — the herd is rendered entirely on the
 CPU via wasm. Also supports rendering the Quaternius triangle-mesh dinosaur
@@ -41,11 +39,10 @@ the Quaternius model feature fetches `glb.js` and `models/*.glb` from the
 same origin at runtime, so serve it locally with something like
 `python3 -m http.server` (`file://` will fail to fetch).
 
-## File layout & architecture
+## Architecture
 
-See **[ARCHITECTURE.md](ARCHITECTURE.md)** for the role of each file, the
-design philosophy, and where each feature is implemented. Start there when
-making changes.
+See **[ARCHITECTURE.md](ARCHITECTURE.md)** (Japanese) for how the ray
+tracing and animation are implemented.
 
 ## Deployment
 
@@ -55,10 +52,4 @@ Cloudflare Pages on every push to `main`.
 ## Credits / License
 
 - **Code**: MIT License (see `LICENSE`)
-- **Dinosaur models (`models/*.glb`)**: [Quaternius](https://quaternius.com/) — *Animated Dinosaur Pack*.
-  **CC0 1.0 Universal (public domain)**. Free for personal and commercial
-  use, modification, and redistribution; attribution is not required (this
-  project credits it out of respect).
-  Source: <https://quaternius.com/packs/animateddinosaurs.html>
-
-Model credits are also shown permanently in the top-right corner of the demo.
+- **Dinosaur models**: [Quaternius](https://quaternius.com/) — *Animated Dinosaur Pack*, CC0 1.0.
