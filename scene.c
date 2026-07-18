@@ -14,10 +14,11 @@
 //     combined scene (SDF march + mesh trace), so the two dinosaur kinds
 //     shadow and mirror each other instead of only their own kind.
 //
-// Acrylic is the exception: an SDF acrylic hit still marches the implicit
-// surface's interior to find its back face (mesh triangles have no interior
-// to march), while a mesh acrylic hit bends the ray by Snell's law at the
-// entry face and samples the analytic sky/ground once. Both still blend
+// Acrylic finds its back face per geometry kind — an SDF acrylic hit
+// marches the implicit surface's interior, a mesh acrylic hit bends the
+// ray by Snell's law at the entry face and BVH-traces to the far side —
+// then both retrace the combined scene from the exit point (sceneRetrace),
+// so the models behind show through either kind of glass body. Both blend
 // into the same cr/cg/cb output through the same transmittance formula.
 #include "vec.h"
 #include "render.h"
@@ -498,9 +499,9 @@ void sceneRows(float az, float el, float dist, int w, int h, unsigned char *fb, 
 
                 // acrylic (mesh-sourced): Snell-bend at the entry face (skip
                 // the bend when exiting, same convention as mesh.c's own
-                // acrylic), then a single analytic sky/ground sample — no
-                // implicit surface to march through, so no scene retrace
-                // here (unlike the SDF acrylic block above).
+                // acrylic), trace through the body to its back face, then
+                // retrace the combined scene from the exit point so the
+                // models behind show through instead of just sky/ground.
                 if (any(mAcrMesh)){
                     v4 eta = vdiv(S(1.f), iorP);
                     v4 kk = vsub(S(1.f), vmul(vmul(eta,eta), vsub(S(1.f), vmul(ci,ci))));
@@ -512,16 +513,40 @@ void sceneRows(float az, float el, float dist, int w, int h, unsigned char *fb, 
                     V3 od2 = v3norm(v3(sel(bentDir.x, rd.x, enterMask),
                                         sel(bentDir.y, rd.y, enterMask),
                                         sel(bentDir.z, rd.z, enterMask)));
+                    // exit point: nearest mesh surface along the interior ray
+                    // (entering lanes only — when leaving the body the ray is
+                    // already outside, so continue straight from P)
+                    V3 ri = v3(vadd(P.x, vmul(od2.x, S(0.02f))),
+                               vadd(P.y, vmul(od2.y, S(0.02f))),
+                               vadd(P.z, vmul(od2.z, S(0.02f))));
+                    v4 tExit; int exitId[4];
+                    meshTraceP(ri, od2, S(30.f), &tExit, exitId);
+                    int exOk[4]; for (int l=0;l<4;l++) exOk[l]=exitId[l]>=0?-1:0;
+                    v4 exHit = vand(vand(wasm_v128_load(exOk), mAcrMesh), enterMask);
+                    v4 tX = sel(tExit, S(0.f), exHit);
+                    V3 XP2 = v3(vadd(ri.x, vmul(od2.x,tX)),
+                                vadd(ri.y, vmul(od2.y,tX)),
+                                vadd(ri.z, vmul(od2.z,tX)));
                     C3 tenv2 = skyCol(od2, 0);
                     v4 odn2 = vlt(od2.y, S(-1e-3f));
                     if (any(odn2)){
-                        v4 tg3 = vdiv(vneg(P.y), vmin(od2.y, S(-1e-3f)));
-                        V3 GP3 = v3(vadd(P.x, vmul(od2.x,tg3)), S(0.f), vadd(P.z, vmul(od2.z,tg3)));
+                        v4 tg3 = vdiv(vneg(XP2.y), vmin(od2.y, S(-1e-3f)));
+                        V3 GP3 = v3(vadd(XP2.x, vmul(od2.x,tg3)), S(0.f), vadd(XP2.z, vmul(od2.z,tg3)));
                         C3 gc3 = groundAlbedo(GP3);
                         v4 fd3 = clamp01(vmul(tg3, S(0.18f)));
                         tenv2.r = sel(mixv(vmul(gc3.r,S(0.9f)), tenv2.r, fd3), tenv2.r, odn2);
                         tenv2.g = sel(mixv(vmul(gc3.g,S(0.9f)), tenv2.g, fd3), tenv2.g, odn2);
                         tenv2.b = sel(mixv(vmul(gc3.b,S(0.9f)), tenv2.b, fd3), tenv2.b, odn2);
+                    }
+                    // pass straight through the back face and retrace the
+                    // combined scene behind the body (SDF herd + mesh line-up)
+                    {
+                        V3 ro3 = v3(vadd(XP2.x, vmul(od2.x, S(0.04f))),
+                                    vadd(XP2.y, vmul(od2.y, S(0.04f))),
+                                    vadd(XP2.z, vmul(od2.z, S(0.04f))));
+                        v4 z = wasm_i32x4_splat(0);
+                        v4 selfNone[3] = { z, z, z };
+                        sceneRetrace(ro3, od2, mAcrMesh, selfNone, &tenv2);
                     }
                     v4 kt2 = vmul(tranP, vsub(S(1.f), vmul(f5, S(0.5f))));
                     cr = sel(mixv(cr, vmul(tenv2.r, vadd(S(0.5f), vmul(S(0.5f),alb.r))), kt2), cr, mAcrMesh);
