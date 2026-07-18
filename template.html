@@ -151,9 +151,9 @@ const STACK_SZ = 65536;               // must match build.sh's -z stack-size and
 // not available (no COOP/COEP headers, e.g. a local file:// open, or an
 // engine without the wasm threads proposal) we fall back to the plain
 // single-threaded build with identical rendering output.
-// m.fn selects which *RowsSteal export to call (renderRowsSteal for the SDF
-// path, renderMeshRowsSteal for the mesh path) — one worker script covers
-// both renderers.
+// m.fn selects which *RowsSteal export to call — sceneRowsSteal drives the
+// combined SDF+mesh renderer that the main loop uses below; one worker
+// script covers it (and the older single-scene exports, if ever needed).
 const WORKER_SRC = `
 let ex;
 onmessage = async (ev) => {
@@ -224,7 +224,9 @@ document.getElementById('badge').textContent =
 
 // rows are independent/deterministic, so this may be called from the main
 // thread and every worker concurrently once frameBegin() has been issued.
-// `fn` is the *RowsSteal export to drive (renderRowsSteal / renderMeshRowsSteal).
+// `fn` is the *RowsSteal export to drive (sceneRowsSteal drives the combined
+// SDF+mesh renderer; renderRowsSteal/renderMeshRowsSteal are kept for the
+// standalone single-scene paths but aren't used by the main render loop).
 function renderRowsMT(fn, h, args){
   e.frameBegin(h);
   const pending = workers.map(wk => new Promise(resolve => {
@@ -234,13 +236,9 @@ function renderRowsMT(fn, h, args){
   e[fn](...args);   // main thread joins the row work-stealing too
   return Promise.all(pending);
 }
-function renderSdfMT(t, az, el, dist, w, h){
-  e.renderPrep(t);
-  return renderRowsMT('renderRowsSteal', h, [az, el, dist, w, h]);
-}
-function renderMeshMT(az, el, dist, w, h){
-  e.meshPrep();
-  return renderRowsMT('renderMeshRowsSteal', h, [az, el, dist, w, h]);
+function renderSceneMT(t, az, el, dist, w, h){
+  e.scenePrep(t);
+  return renderRowsMT('sceneRowsSteal', h, [az, el, dist, w, h]);
 }
 
 // ---- per-dino material panel ----
@@ -611,7 +609,11 @@ async function frame(now){
   if (resMode !== 'auto') lvl = resMode;
   const [w, h] = LV[lvl];
   const t0 = performance.now();
-  if (sceneMode === 'mesh' && meshLoaded && built) {
+
+  // Mesh line-up animation/travel keeps advancing whenever the models are
+  // loaded, regardless of which scene the camera/UI is currently focused
+  // on — the SDF herd and the mesh line-up render together every frame now.
+  if (meshLoaded && built) {
     // herd leader = frontmost dino (greatest travel)
     let lead = -Infinity;
     for (const m of built) if (meshTravel[m.mi] > lead) lead = meshTravel[m.mi];
@@ -630,23 +632,25 @@ async function frame(now){
     if (built[focusIndex].curAnim !== lastFocusAnim) {
       lastFocusAnim = built[focusIndex].curAnim; highlightAction();
     }
-    // camera follows the focused dino in x and z
-    focusXCur += (built[focusIndex].slotX - focusXCur) * Math.min(1, dt*6);
-    focusZCur += (meshTravel[focusIndex] - focusZCur) * Math.min(1, dt*6);
-    e.meshSetFocus(focusXCur, focusZCur);
     for (const m of built) {
       const b = GLB.sampleBones(m, m.curAnim, t);
       const zoff = meshTravel[m.mi];
       for (let j = 0; j < m.nj; j++) b[j*12+11] += zoff;   // rigid world-Z shift
       boneAll.set(b, m.jbase*12);
     }
-    if (mtActive) await renderMeshMT(az, el, dist, w, h);
-    else e.renderMesh(az, el, dist, w, h);
-  } else if (mtActive) {
-    await renderSdfMT(t, az, el, dist, w, h);
-  } else {
-    e.render(t, az, el, dist, w, h);
   }
+
+  // camera follow target: mesh focus follows the selected mesh dino in x/z;
+  // SDF focus keeps the herd's fixed reference point (the world scrolls
+  // under the camera on that side instead).
+  const wantX = (sceneMode === 'mesh' && meshLoaded && built) ? built[focusIndex].slotX : 0;
+  const wantZ = (sceneMode === 'mesh' && meshLoaded && built) ? meshTravel[focusIndex] : 0;
+  focusXCur += (wantX - focusXCur) * Math.min(1, dt*6);
+  focusZCur += (wantZ - focusZCur) * Math.min(1, dt*6);
+  e.meshSetFocus(focusXCur, focusZCur);
+
+  if (mtActive) await renderSceneMT(t, az, el, dist, w, h);
+  else e.renderScene(t, az, el, dist, w, h);
   const rms = performance.now() - t0;
   ema = ema * 0.85 + rms * 0.15;
   // copy while lvl still matches the (w,h) just rendered — the auto-res

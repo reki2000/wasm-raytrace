@@ -8,6 +8,7 @@
 #include "anim.h"
 #include "dino_model.h"
 #include "mesh.h"
+#include "scene.h"
 
 #define WMAX 1280
 #define HMAX 720
@@ -76,6 +77,23 @@ void e_renderRows(float az, float el, float dist, int w, int h, int y0, int y1){
     renderRows(az, el, dist, w, h, FB, y0, y1);
 }
 
+// ---- combined scene (SDF herd + mesh line-up together, sharing lighting/
+// shadows/floor-mirror/materials — see scene.h) ----
+__attribute__((export_name("renderScene")))
+void e_renderScene(float t, float az, float el, float dist, int w, int h){
+    renderScene(t, az, el, dist, w, h, FB);
+}
+
+__attribute__((export_name("scenePrep")))
+void e_scenePrep(float t){
+    scenePrep(t);
+}
+
+__attribute__((export_name("sceneRows")))
+void e_sceneRows(float az, float el, float dist, int w, int h, int y0, int y1){
+    sceneRows(az, el, dist, w, h, FB, y0, y1);
+}
+
 #ifdef WASM_THREADS
 #include <stdatomic.h>
 
@@ -113,7 +131,9 @@ void e_renderRowsSteal(float az, float el, float dist, int w, int h){
 }
 
 // Mesh-path counterpart of renderRowsSteal; shares the same g_nextRow/
-// g_frameH counter (the two scenes are never rendered in the same frame).
+// g_frameH counter. Kept for callers still using the standalone mesh-only
+// path (test_mt_mesh.js); the combined path below (sceneRowsSteal) is what
+// template.html drives now, since it renders both scenes together.
 __attribute__((export_name("renderMeshRowsSteal")))
 void e_renderMeshRowsSteal(float az, float el, float dist, int w, int h){
     for (;;){
@@ -122,6 +142,18 @@ void e_renderMeshRowsSteal(float az, float el, float dist, int w, int h){
         int y1 = y0 + ROW_CHUNK;
         if (y1 > g_frameH) y1 = g_frameH;
         renderMeshRows(az, el, dist, w, h, FB, y0, y1);
+    }
+}
+
+// Combined-scene counterpart; shares the same g_nextRow/g_frameH counter.
+__attribute__((export_name("sceneRowsSteal")))
+void e_sceneRowsSteal(float az, float el, float dist, int w, int h){
+    for (;;){
+        int y0 = atomic_fetch_add(&g_nextRow, ROW_CHUNK);
+        if (y0 >= g_frameH) break;
+        int y1 = y0 + ROW_CHUNK;
+        if (y1 > g_frameH) y1 = g_frameH;
+        sceneRows(az, el, dist, w, h, FB, y0, y1);
     }
 }
 #endif

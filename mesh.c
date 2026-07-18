@@ -35,7 +35,7 @@ void meshSetCounts(int nv, int nt, int nj){
     NV = nv<MAXV?nv:MAXV; NT = nt<MAXT?nt:MAXT; NJ = nj<MAXJ?nj:MAXJ;
 }
 
-static float FOCX=0.f, FOCZ=0.f;
+float FOCX=0.f, FOCZ=0.f;
 void meshSetFocus(float x, float z){ FOCX=x; FOCZ=z; }
 
 // ---------- per-model material (mirrors render.c) ----------
@@ -193,7 +193,7 @@ static inline int slab(const float*ro,const float*inv,int node,float tmax,float*
     *tn=t0; return 1;
 }
 // nearest triangle; returns tri id or -1, writes t
-static int traceMesh(const float*ro,const float*rd,float tmax,float*tHit){
+int meshTraceScalar(const float*ro,const float*rd,float tmax,float*tHit){
     float inv[3]={1.f/rd[0],1.f/rd[1],1.f/rd[2]};
     float best=tmax; int hit=-1;
     if (NNODE==0) return -1;
@@ -236,7 +236,7 @@ static int traceMesh(const float*ro,const float*rd,float tmax,float*tHit){
     }
     *tHit=best; return hit;
 }
-static int occluded(const float*ro,const float*rd,float tmax){
+int meshOccluded(const float*ro,const float*rd,float tmax){
     float inv[3]={1.f/rd[0],1.f/rd[1],1.f/rd[2]};
     if (NNODE==0) return 0;
     v4 rdx=S(rd[0]),rdy=S(rd[1]),rdz=S(rd[2]);
@@ -319,6 +319,42 @@ static void envReflect(const float*P,const float*rd,float*o){
     }
 }
 
+// ---------- combined-scene surface lookup (used by scene.c) ----------
+// Same geometry/material logic as the front half of shadeMeshHit below (kept
+// separate rather than factored out of it, so the standalone mesh path's
+// tested scalar behavior can't be perturbed by this refactor).
+void meshSurface(int tri, const float *P, const float *rd,
+                  float *N, float *albedo, int *entering,
+                  int *mode, float *refl, float *tran, float *ior, float *gloss){
+    int mdl=TMDL[tri];
+    *mode=M_MODE[mdl]; *refl=M_REFL[mdl]; *tran=M_TRAN[mdl]; *ior=M_IOR[mdl]; *gloss=M_GLOSS[mdl];
+    const int *id=IDX+tri*3;
+    const float *v0=SV+id[0]*3,*v1=SV+id[1]*3,*v2=SV+id[2]*3;
+    float ax=v1[0]-v0[0],ay=v1[1]-v0[1],az=v1[2]-v0[2];
+    float bx=v2[0]-v0[0],by=v2[1]-v0[1],bz=v2[2]-v0[2];
+    float nx=ay*bz-az*by, ny=az*bx-ax*bz, nz=ax*by-ay*bx;
+    float nl=1.f/fsqrt(nx*nx+ny*ny+nz*nz); nx*=nl; ny*=nl; nz*=nl;
+    int enter = nx*rd[0]+ny*rd[1]+nz*rd[2] <= 0.f;
+    *entering = enter;
+    if (!enter){ nx=-nx; ny=-ny; nz=-nz; }
+    if (M_SMOOTH[mdl]){
+        float vpx=P[0]-v0[0], vpy=P[1]-v0[1], vpz=P[2]-v0[2];
+        float d00=ax*ax+ay*ay+az*az, d01=ax*bx+ay*by+az*bz, d11=bx*bx+by*by+bz*bz;
+        float d20=vpx*ax+vpy*ay+vpz*az, d21=vpx*bx+vpy*by+vpz*bz;
+        float den=d00*d11-d01*d01, invd=den!=0.f?1.f/den:0.f;
+        float bv=(d11*d20-d01*d21)*invd, bw=(d00*d21-d01*d20)*invd, bu=1.f-bv-bw;
+        const float *n0=SN+id[0]*3,*n1=SN+id[1]*3,*n2=SN+id[2]*3;
+        float sx=bu*n0[0]+bv*n1[0]+bw*n2[0];
+        float sy=bu*n0[1]+bv*n1[1]+bw*n2[1];
+        float sz=bu*n0[2]+bv*n1[2]+bw*n2[2];
+        float sl=1.f/fsqrt(sx*sx+sy*sy+sz*sz+1e-20f); sx*=sl; sy*=sl; sz*=sl;
+        if (sx*rd[0]+sy*rd[1]+sz*rd[2]>0.f){ sx=-sx; sy=-sy; sz=-sz; }
+        nx=sx; ny=sy; nz=sz;
+    }
+    N[0]=nx; N[1]=ny; N[2]=nz;
+    albedo[0]=COL[tri*3]; albedo[1]=COL[tri*3+1]; albedo[2]=COL[tri*3+2];
+}
+
 // ---------- shading (recursive: floor mirror + acrylic see-through) ----------
 static void shade(const float*ro,const float*rd,int depth,float*out);
 
@@ -360,7 +396,7 @@ static void shadeMeshHit(const float*ro,const float*rd,float tH,int tri,int dept
     float sh=1.f;
     if (ndl>0.02f){
         float so[3]={P[0]+nx*0.006f,P[1]+ny*0.006f,P[2]+nz*0.006f};
-        if (occluded(so,SUN,20.f)) sh=0.25f;
+        if (meshOccluded(so,SUN,20.f)) sh=0.25f;
     }
     float dif=ndl*sh;
     float hx=SUN[0]-rd[0],hy=SUN[1]-rd[1],hz=SUN[2]-rd[2];
@@ -430,7 +466,7 @@ static void shadeGround(const float*ro,const float*rd,float tg,int depth,float*o
     float ga[3]; groundCols(P[0],P[2],ga);
     float ndl=SUN[1], sh=1.f;
     float so[3]={P[0],0.012f,P[2]};
-    if (occluded(so,SUN,20.f)) sh=0.3f;
+    if (meshOccluded(so,SUN,20.f)) sh=0.3f;
     float dif=ndl*sh, amb=1.f;
     float cr=ga[0]*(dif*1.30f+amb*0.42f);
     float cg=ga[1]*(dif*1.22f+amb*0.50f);
@@ -456,19 +492,21 @@ static void shadeGround(const float*ro,const float*rd,float tg,int depth,float*o
 // nearest of mesh / ground / sky
 static void shade(const float*ro,const float*rd,int depth,float*out){
     float tg = rd[1]<-1e-4f ? (-ro[1]/rd[1]) : 1e9f;
-    float tMesh; int tri=traceMesh(ro,rd,(tg<1e8f?tg:1e9f),&tMesh);
+    float tMesh; int tri=meshTraceScalar(ro,rd,(tg<1e8f?tg:1e9f),&tMesh);
     if (tri>=0){ shadeMeshHit(ro,rd,tMesh,tri,depth,out); return; }
     if (tg<1e8f){ shadeGround(ro,rd,tg,depth,out); return; }
     skyCols(rd,1,out);
 }
 
 // 4-ray packet primary trace: one shared traversal stack, per-lane slab + per-lane
-// best. Ray dirs in SoA lanes; each triangle scalar-splatted and tested against all
-// 4 rays at once. Writes per-lane nearest t (tHitOut) and hit triangle id (hitId[4],
-// -1 = miss). Shading stays scalar (called per lane) so output matches shade().
-static void traceMeshP(const float*ro, V3 rd, v4 tmax, v4*tHitOut, int*hitId){
+// best. Ray dirs (and origins) in SoA lanes; each triangle scalar-splatted and
+// tested against all 4 rays at once. Writes per-lane nearest t (tHitOut) and hit
+// triangle id (hitId[4], -1 = miss). ro is per-lane so this also serves
+// per-pixel-origin secondary rays (floor mirror, acrylic retrace), not just a
+// shared camera origin.
+void meshTraceP(V3 ro, V3 rd, v4 tmax, v4*tHitOut, int*hitId){
     v4 invx=vdiv(S(1.f),rd.x), invy=vdiv(S(1.f),rd.y), invz=vdiv(S(1.f),rd.z);
-    v4 rox=S(ro[0]),roy=S(ro[1]),roz=S(ro[2]);
+    v4 rox=ro.x, roy=ro.y, roz=ro.z;
     v4 best=tmax, hitv=wasm_i32x4_splat(-1);
     if (NNODE==0){ *tHitOut=best; wasm_v128_store(hitId,hitv); return; }
     int st[160],sp=0; st[sp++]=0;
@@ -548,6 +586,7 @@ void renderMeshRows(float az, float el, float dist, int w, int h, unsigned char*
     const float FL=1.8f;
     float ih=2.0f/(float)h;
     float ro[3]={cxx,cyy,czz};
+    V3 roV=v3(S(cxx),S(cyy),S(czz));
     v4 X4=wasm_f32x4_make(0.f,1.f,2.f,3.f);
 
     for (int y=y0;y<y1;y++){
@@ -565,7 +604,7 @@ void renderMeshRows(float az, float el, float dist, int w, int h, unsigned char*
             v4 tg=sel(vdiv(S(-cyy), rd.y), S(1e9f), down);   // ground plane t
             v4 tmax=sel(tg, S(1e9f), vlt(tg,S(1e8f)));
             v4 tHitv; int hitId[4];
-            traceMeshP(ro, rd, tmax, &tHitv, hitId);
+            meshTraceP(roV, rd, tmax, &tHitv, hitId);
             // per-lane scalar shading (bit-identical to shade()); handles w%4 tail
             float rdxA[4],rdyA[4],rdzA[4],tgA[4],tHA[4];
             wasm_v128_store(rdxA,rd.x); wasm_v128_store(rdyA,rd.y); wasm_v128_store(rdzA,rd.z);

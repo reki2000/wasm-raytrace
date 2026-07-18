@@ -66,7 +66,7 @@ void setMaterial(int i, int mode, float refl, float tran, float ior, float tex, 
 }
 
 // ---------- environment ----------
-static inline C3 skyCol(V3 rd, int clouds){
+C3 skyCol(V3 rd, int clouds){
     v4 sy = clamp01(vmul(rd.y, S(1.7f)));
     C3 c;
     c.r = mixv(S(0.82f), S(0.30f), sy);
@@ -94,7 +94,7 @@ static inline C3 skyCol(V3 rd, int clouds){
     return c;
 }
 
-static inline C3 groundAlbedo(V3 P){
+C3 groundAlbedo(V3 P){
     v4 gu = vfloor(vmul(vadd(P.x, S(SCROLL)), S(1.1f)));
     v4 gv = vfloor(vmul(P.z, S(1.1f)));
     v4 gs = vadd(gu, gv);
@@ -109,8 +109,8 @@ static inline C3 groundAlbedo(V3 P){
 
 // per-lane instance id from hit position: nearest per-instance SDF over the
 // active prim list (the hit surface's prim is always in the list, at distance ~0)
-static inline void dinoMasks(V3 P, v4 hit, const unsigned char *L, int n,
-                             v4 *m0, v4 *m1, v4 *m2){
+void dinoMasks(V3 P, v4 hit, const unsigned char *L, int n,
+               v4 *m0, v4 *m1, v4 *m2){
     v4 dd[ND];
     for (int i=0;i<ND;i++) dd[i] = eyePair(P, i);
     for (int k=0;k<n;k++){
@@ -136,7 +136,7 @@ static inline void dinoMasks(V3 P, v4 hit, const unsigned char *L, int n,
 }
 
 // ---------- soft shadow toward sun, per instance (translucent ones cast lighter shadows) ----------
-static v4 softshadow(V3 p, v4 m){
+v4 softshadow(V3 p, v4 m){
     v4 res = S(1.f);
     V3 sd = v3(S(SUNX), S(SUNY), S(SUNZ));
     for (int i=0;i<ND;i++){

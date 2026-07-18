@@ -7,6 +7,7 @@
 // render.c. Per-model materials mirror the SDF path (plain/texture/metal/acrylic).
 #ifndef MESH_H
 #define MESH_H
+#include "vec.h"
 
 #define MAXV 20000   // max total vertices  (pack sum ~19114)
 #define MAXT 10000   // max total triangles (pack sum ~9532)
@@ -25,6 +26,7 @@ float* meshBone(void);     // per-frame skin mats   [MAXJ*12] (3x4 row-major, fi
 
 void meshSetCounts(int nv, int nt, int nj);
 void meshSetFocus(float x, float z);   // camera orbit target (selected dino)
+extern float FOCX, FOCZ;               // current camera orbit target (shared with scene.c)
 
 // per-model surface material (same semantics as render.c setMaterial, plus
 // a normal-welding toggle that applies to any mode)
@@ -40,5 +42,27 @@ void renderMesh(float az, float el, float dist, int w, int h, unsigned char* fb)
 // with different [y0,y1) ranges from any thread sharing this module's memory)
 void meshPrep(void);
 void renderMeshRows(float az, float el, float dist, int w, int h, unsigned char* fb, int y0, int y1);
+
+// ---------- combined-scene API (used by scene.c to unify with the SDF path) ----------
+// 4-ray-packet BVH trace against the mesh line-up, bounded by tmax per lane
+// (e.g. the SDF path's own nearest-hit distance, so the combined renderer
+// only accepts a mesh hit when it's strictly nearer). ro is per-lane (SoA)
+// so this covers both a shared camera origin (splat the same point into all
+// 4 lanes, as the primary ray packet does) and genuinely per-pixel origins
+// (floor-mirror / acrylic-retrace rays, which start at each pixel's own hit
+// point). hitId4 gets 4 triangle ids (-1 = no hit closer than tmax) written
+// via wasm_v128_store semantics (4 contiguous ints).
+void meshTraceP(V3 ro, V3 rd, v4 tmax, v4 *tHitOut, int *hitId4);
+// scalar single-ray trace / shadow occlusion test, for secondary rays
+// (floor mirror, acrylic retrace, sun visibility) driven per-lane.
+int  meshTraceScalar(const float *ro, const float *rd, float tmax, float *tHit);
+int  meshOccluded(const float *ro, const float *rd, float tmax);
+// Surface lookup for a mesh hit at world point P along incoming ray rd:
+// outward normal (flipped to face against rd), vertex-color albedo, that
+// triangle's model material, and whether rd is entering the body (for
+// acrylic Snell refraction — same convention as render.c's SDF acrylic).
+void meshSurface(int tri, const float *P, const float *rd,
+                  float *N, float *albedo, int *entering,
+                  int *mode, float *refl, float *tran, float *ior, float *gloss);
 
 #endif
