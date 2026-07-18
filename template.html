@@ -662,6 +662,12 @@ async function frame(now){
   // register zero SDF primitives, and meshSetCounts(0,0,...) makes the mesh
   // line-up's BVH empty. Either way the renderer just finds nothing there.
   e.dinoSetActive(sceneMode === 'sdf' ? 1 : 0);
+  // Ground scroll is the SDF herd's treadmill trick (the herd barely moves,
+  // so the ground slides under it along X). The mesh line-up instead really
+  // translates along +Z (meshTravel/focusZCur above), so scrolling the
+  // ground in mesh mode would slide it sideways against the dinosaur's
+  // actual walking direction — keep it off while mesh mode is showing.
+  e.groundScrollSetActive(sceneMode === 'sdf' ? 1 : 0);
   if (meshLoaded) {
     const on = sceneMode === 'mesh';
     e.meshSetCounts(on ? meshTotalNV : 0, on ? meshTotalNT : 0, meshTotalNJ);

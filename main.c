@@ -58,6 +58,11 @@ void e_dinoSetActive(int active){
     dinoSetActive(active);
 }
 
+__attribute__((export_name("groundScrollSetActive")))
+void e_groundScrollSetActive(int active){
+    groundScrollSetActive(active);
+}
+
 __attribute__((export_name("render")))
 void render(float t, float az, float el, float dist, int w, int h){
     animTick(t);      // advance the animation clock (GT, ground scroll)
