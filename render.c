@@ -169,6 +169,100 @@ v4 softshadow(V3 p, v4 m){
     return res;
 }
 
+// ---------- secondary-ray herd retrace ----------
+// March a secondary ray (acrylic exit ray, metal mirror ray) against the
+// herd, excluding each lane's own instance, and where it hits replace *env
+// with the shaded surface — so glass bodies show the dinosaurs behind them
+// and mirror bodies reflect the ones around them, not just the analytic
+// sky/ground.
+static void herdRetrace(V3 ro2, V3 od, v4 mask, const v4 selfM[3], C3 *env){
+    V3 Lv = v3(S(SUNX), S(SUNY), S(SUNZ));
+    v4 tt0 = S(1e9f), tt1 = S(-1e9f), tvm = wasm_i32x4_splat(0);
+    int tdh[ND];
+    for (int i=0;i<ND;i++){
+        v4 ocx=vsub(ro2.x,S(DB[i][0])), ocy=vsub(ro2.y,S(DB[i][1])), ocz=vsub(ro2.z,S(DB[i][2]));
+        v4 bb = vadd(vadd(vmul(ocx,od.x), vmul(ocy,od.y)), vmul(ocz,od.z));
+        v4 cc = vsub(vadd(vadd(vmul(ocx,ocx),vmul(ocy,ocy)),vmul(ocz,ocz)), S(DB[i][3]*DB[i][3]));
+        v4 disc = vsub(vmul(bb,bb), cc);
+        v4 sq = vsqrt(vmax(disc, S(0.f)));
+        v4 e1 = vsub(sq, bb);
+        v4 ok = vand(vandn(mask, selfM[i]), vand(vgt(disc, S(0.f)), vgt(e1, S(0.f))));
+        tdh[i] = any(ok);
+        if (tdh[i]){
+            v4 e0 = vmax(vsub(vneg(bb), sq), S(0.f));
+            tt0 = sel(vmin(tt0, e0), tt0, ok);
+            tt1 = sel(vmax(tt1, e1), tt1, ok);
+            tvm = vor(tvm, ok);
+        }
+    }
+    if (!any(tvm)) return;
+    unsigned char LT[MAXP]; int nt = 0;
+    for (int i=0;i<ND;i++) if (tdh[i])
+        nt = buildList(ro2, od, tt0, tt1, 0.03f, DPR[i][0], DPR[i][1], LT, nt);
+    v4 tt = tt0, thit = wasm_i32x4_splat(0);
+    if (nt){
+        v4 act = tvm;
+        for (int i=0;i<40;i++){
+            V3 q = v3(vadd(ro2.x, vmul(od.x,tt)),
+                      vadd(ro2.y, vmul(od.y,tt)),
+                      vadd(ro2.z, vmul(od.z,tt)));
+            v4 d = mapLE(q, LT, nt);
+            v4 nh3 = vand(act, vlt(d, vadd(S(0.0025f), vmul(tt, S(0.0012f)))));
+            thit = vor(thit, nh3);
+            act = vandn(act, nh3);
+            tt = sel(vadd(tt, vmul(d, S(0.92f))), tt, act);
+            act = vand(act, vlt(tt, tt1));
+            if (!any(act)) break;
+        }
+    }
+    if (!any(thit)) return;
+    V3 TP = v3(vadd(ro2.x, vmul(od.x,tt)),
+               vadd(ro2.y, vmul(od.y,tt)),
+               vadd(ro2.z, vmul(od.z,tt)));
+    const float e3 = 0.004f;
+    v4 h1 = mapLE(v3(vadd(TP.x,S(e3)), vsub(TP.y,S(e3)), vsub(TP.z,S(e3))), LT, nt);
+    v4 h2 = mapLE(v3(vsub(TP.x,S(e3)), vsub(TP.y,S(e3)), vadd(TP.z,S(e3))), LT, nt);
+    v4 h3 = mapLE(v3(vsub(TP.x,S(e3)), vadd(TP.y,S(e3)), vsub(TP.z,S(e3))), LT, nt);
+    v4 h4 = mapLE(v3(vadd(TP.x,S(e3)), vadd(TP.y,S(e3)), vadd(TP.z,S(e3))), LT, nt);
+    V3 TN = v3norm(v3(
+        vadd(vsub(vsub(h1,h2),h3), h4),
+        vadd(vsub(vsub(h4,h1),h2), h3),
+        vadd(vsub(vsub(h2,h1),h3), h4)));
+    v4 tm0,tm1,tm2;
+    dinoMasks(TP, thit, LT, nt, &tm0, &tm1, &tm2);
+    C3 ta = dinoAlbedo(TP, TN, tm0, tm1, tm2);
+    v4 tdif = vmax(v3dot(TN, Lv), S(0.f));
+    v4 tr_ = vmul(ta.r, vadd(vmul(tdif,S(1.1f)), S(0.34f)));
+    v4 tg_ = vmul(ta.g, vadd(vmul(tdif,S(1.05f)), S(0.38f)));
+    v4 tb_ = vmul(ta.b, vadd(vmul(tdif,S(0.95f)), S(0.46f)));
+    v4 tMet = modeMask(2, tm0, tm1, tm2);
+    v4 tAcr = modeMask(3, tm0, tm1, tm2);
+    if (any(tMet)){   // tinted sky mirror
+        v4 trefl = dsel(M_REFL, tm0, tm1);
+        v4 dn3 = v3dot(TN, od);
+        V3 rr3 = v3(vsub(od.x, vmul(TN.x, vmul(S(2.f),dn3))),
+                    vsub(od.y, vmul(TN.y, vmul(S(2.f),dn3))),
+                    vsub(od.z, vmul(TN.z, vmul(S(2.f),dn3))));
+        C3 e3c = skyCol(rr3, 0);
+        v4 mR = vmin(vadd(vmul(ta.r, S(1.9f)), S(0.08f)), S(1.f));
+        v4 mG = vmin(vadd(vmul(ta.g, S(1.9f)), S(0.08f)), S(1.f));
+        v4 mB = vmin(vadd(vmul(ta.b, S(1.9f)), S(0.08f)), S(1.f));
+        tr_ = sel(mixv(tr_, vmul(e3c.r,mR), trefl), tr_, tMet);
+        tg_ = sel(mixv(tg_, vmul(e3c.g,mG), trefl), tg_, tMet);
+        tb_ = sel(mixv(tb_, vmul(e3c.b,mB), trefl), tb_, tMet);
+    }
+    if (any(tAcr)){   // let the sky behind show through
+        v4 ttran = dsel(M_TRAN, tm0, tm1);
+        C3 skyBeyond = skyCol(od, 0);
+        tr_ = sel(mixv(tr_, skyBeyond.r, ttran), tr_, tAcr);
+        tg_ = sel(mixv(tg_, skyBeyond.g, ttran), tg_, tAcr);
+        tb_ = sel(mixv(tb_, skyBeyond.b, ttran), tb_, tAcr);
+    }
+    env->r = sel(tr_, env->r, thit);
+    env->g = sel(tg_, env->g, thit);
+    env->b = sel(tb_, env->b, thit);
+}
+
 // ---------- frame pipeline ----------
 void renderRows(float az, float el, float dist, int w, int h, unsigned char *fb, int y0, int y1){
     const float tx=0.f, ty=0.85f, tz=0.f;
@@ -395,92 +489,7 @@ void renderRows(float az, float el, float dist, int w, int h, unsigned char *fb,
                                     vadd(XP.y, vmul(od.y, S(0.04f))),
                                     vadd(XP.z, vmul(od.z, S(0.04f))));
                         v4 selfM[3] = { m0, m1, m2 };
-                        v4 tt0 = S(1e9f), tt1 = S(-1e9f), tvm = wasm_i32x4_splat(0);
-                        int tdh[ND];
-                        for (int i=0;i<ND;i++){
-                            v4 ocx=vsub(ro2.x,S(DB[i][0])), ocy=vsub(ro2.y,S(DB[i][1])), ocz=vsub(ro2.z,S(DB[i][2]));
-                            v4 bb = vadd(vadd(vmul(ocx,od.x), vmul(ocy,od.y)), vmul(ocz,od.z));
-                            v4 cc = vsub(vadd(vadd(vmul(ocx,ocx),vmul(ocy,ocy)),vmul(ocz,ocz)), S(DB[i][3]*DB[i][3]));
-                            v4 disc = vsub(vmul(bb,bb), cc);
-                            v4 sq = vsqrt(vmax(disc, S(0.f)));
-                            v4 e1 = vsub(sq, bb);
-                            v4 ok = vand(vandn(mAcr, selfM[i]), vand(vgt(disc, S(0.f)), vgt(e1, S(0.f))));
-                            tdh[i] = any(ok);
-                            if (tdh[i]){
-                                v4 e0 = vmax(vsub(vneg(bb), sq), S(0.f));
-                                tt0 = sel(vmin(tt0, e0), tt0, ok);
-                                tt1 = sel(vmax(tt1, e1), tt1, ok);
-                                tvm = vor(tvm, ok);
-                            }
-                        }
-                        v4 tt = tt0, thit = wasm_i32x4_splat(0);
-                        if (any(tvm)){
-                            unsigned char LT[MAXP]; int nt=0;
-                            for (int i=0;i<ND;i++) if (tdh[i])
-                                nt = buildList(ro2, od, tt0, tt1, 0.03f, DPR[i][0], DPR[i][1], LT, nt);
-                            if (nt){
-                                v4 act = tvm;
-                                for (int i=0;i<40;i++){
-                                    V3 q = v3(vadd(ro2.x, vmul(od.x,tt)),
-                                              vadd(ro2.y, vmul(od.y,tt)),
-                                              vadd(ro2.z, vmul(od.z,tt)));
-                                    v4 d = mapLE(q, LT, nt);
-                                    v4 nh3 = vand(act, vlt(d, vadd(S(0.0025f), vmul(tt, S(0.0012f)))));
-                                    thit = vor(thit, nh3);
-                                    act = vandn(act, nh3);
-                                    tt = sel(vadd(tt, vmul(d, S(0.92f))), tt, act);
-                                    act = vand(act, vlt(tt, tt1));
-                                    if (!any(act)) break;
-                                }
-                            }
-                            if (any(thit)){
-                                V3 TP = v3(vadd(ro2.x, vmul(od.x,tt)),
-                                           vadd(ro2.y, vmul(od.y,tt)),
-                                           vadd(ro2.z, vmul(od.z,tt)));
-                                const float e3 = 0.004f;
-                                v4 h1 = mapLE(v3(vadd(TP.x,S(e3)), vsub(TP.y,S(e3)), vsub(TP.z,S(e3))), LT, nt);
-                                v4 h2 = mapLE(v3(vsub(TP.x,S(e3)), vsub(TP.y,S(e3)), vadd(TP.z,S(e3))), LT, nt);
-                                v4 h3 = mapLE(v3(vsub(TP.x,S(e3)), vadd(TP.y,S(e3)), vsub(TP.z,S(e3))), LT, nt);
-                                v4 h4 = mapLE(v3(vadd(TP.x,S(e3)), vadd(TP.y,S(e3)), vadd(TP.z,S(e3))), LT, nt);
-                                V3 TN = v3norm(v3(
-                                    vadd(vsub(vsub(h1,h2),h3), h4),
-                                    vadd(vsub(vsub(h4,h1),h2), h3),
-                                    vadd(vsub(vsub(h2,h1),h3), h4)));
-                                v4 tm0,tm1,tm2;
-                                dinoMasks(TP, thit, LT, nt, &tm0, &tm1, &tm2);
-                                C3 ta = dinoAlbedo(TP, TN, tm0, tm1, tm2);
-                                v4 tdif = vmax(v3dot(TN, Lv), S(0.f));
-                                v4 tr_ = vmul(ta.r, vadd(vmul(tdif,S(1.1f)), S(0.34f)));
-                                v4 tg_ = vmul(ta.g, vadd(vmul(tdif,S(1.05f)), S(0.38f)));
-                                v4 tb_ = vmul(ta.b, vadd(vmul(tdif,S(0.95f)), S(0.46f)));
-                                v4 tMet = modeMask(2, tm0, tm1, tm2);
-                                v4 tAcr = modeMask(3, tm0, tm1, tm2);
-                                if (any(tMet)){
-                                    v4 trefl = dsel(M_REFL, tm0, tm1);
-                                    v4 dn3 = v3dot(TN, od);
-                                    V3 rr3 = v3(vsub(od.x, vmul(TN.x, vmul(S(2.f),dn3))),
-                                                vsub(od.y, vmul(TN.y, vmul(S(2.f),dn3))),
-                                                vsub(od.z, vmul(TN.z, vmul(S(2.f),dn3))));
-                                    C3 e3c = skyCol(rr3, 0);
-                                    v4 mR = vmin(vadd(vmul(ta.r, S(1.9f)), S(0.08f)), S(1.f));
-                                    v4 mG = vmin(vadd(vmul(ta.g, S(1.9f)), S(0.08f)), S(1.f));
-                                    v4 mB = vmin(vadd(vmul(ta.b, S(1.9f)), S(0.08f)), S(1.f));
-                                    tr_ = sel(mixv(tr_, vmul(e3c.r,mR), trefl), tr_, tMet);
-                                    tg_ = sel(mixv(tg_, vmul(e3c.g,mG), trefl), tg_, tMet);
-                                    tb_ = sel(mixv(tb_, vmul(e3c.b,mB), trefl), tb_, tMet);
-                                }
-                                if (any(tAcr)){
-                                    v4 ttran = dsel(M_TRAN, tm0, tm1);
-                                    C3 skyBeyond = skyCol(od, 0);
-                                    tr_ = sel(mixv(tr_, skyBeyond.r, ttran), tr_, tAcr);
-                                    tg_ = sel(mixv(tg_, skyBeyond.g, ttran), tg_, tAcr);
-                                    tb_ = sel(mixv(tb_, skyBeyond.b, ttran), tb_, tAcr);
-                                }
-                                tenv.r = sel(tr_, tenv.r, thit);
-                                tenv.g = sel(tg_, tenv.g, thit);
-                                tenv.b = sel(tb_, tenv.b, thit);
-                            }
-                        }
+                        herdRetrace(ro2, od, mAcr, selfM, &tenv);
                     }
 
                     v4 att = vdiv(S(1.f), vadd(S(1.f), vmul(s, S(1.6f))));  // beer-ish falloff
@@ -502,6 +511,16 @@ void renderRows(float az, float el, float dist, int w, int h, unsigned char *fb,
 
                 // metal: albedo-tinted mirror, diffuse crushed by reflectivity
                 if (any(mMet)){
+                    // mirror the herd: march the reflected ray against the other
+                    // instances so mirror bodies reflect the surroundings, not
+                    // just the analytic sky/ground
+                    {
+                        V3 ro2 = v3(vadd(P.x, vmul(rr.x, S(0.04f))),
+                                    vadd(P.y, vmul(rr.y, S(0.04f))),
+                                    vadd(P.z, vmul(rr.z, S(0.04f))));
+                        v4 selfM[3] = { m0, m1, m2 };
+                        herdRetrace(ro2, rr, mMet, selfM, &env);
+                    }
                     v4 Fm = vmul(reflP, vadd(S(0.62f), vmul(S(0.38f), f5)));
                     Fm = vmul(Fm, vadd(S(0.6f), vmul(S(0.4f), sh)));
                     v4 tR = vmin(vadd(vmul(alb.r, S(1.9f)), S(0.08f)), S(1.f));

@@ -32,6 +32,155 @@ void scenePrep(float t){
     meshPrep();
 }
 
+// ---------- secondary-ray combined-scene retrace ----------
+// Trace a secondary ray (acrylic exit ray, metal mirror ray) against the
+// combined scene — the SDF herd minus each lane's own instance, plus the
+// whole mesh line-up — and where it hits replace *env with the shaded
+// surface, so glass bodies show the dinosaurs behind them and mirror
+// bodies reflect the ones around them, whichever kind they are.
+static void sceneRetrace(V3 ro2, V3 od, v4 mask, const v4 selfM[3], C3 *env){
+    V3 Lv = v3(S(SUNX), S(SUNY), S(SUNZ));
+    v4 tt0 = S(1e9f), tt1 = S(-1e9f), tvm = wasm_i32x4_splat(0);
+    int tdh[ND];
+    for (int i=0;i<ND;i++){
+        v4 ocx=vsub(ro2.x,S(DB[i][0])), ocy=vsub(ro2.y,S(DB[i][1])), ocz=vsub(ro2.z,S(DB[i][2]));
+        v4 bb = vadd(vadd(vmul(ocx,od.x), vmul(ocy,od.y)), vmul(ocz,od.z));
+        v4 cc = vsub(vadd(vadd(vmul(ocx,ocx),vmul(ocy,ocy)),vmul(ocz,ocz)), S(DB[i][3]*DB[i][3]));
+        v4 disc = vsub(vmul(bb,bb), cc);
+        v4 sq = vsqrt(vmax(disc, S(0.f)));
+        v4 e1 = vsub(sq, bb);
+        v4 ok = vand(vandn(mask, selfM[i]), vand(vgt(disc, S(0.f)), vgt(e1, S(0.f))));
+        tdh[i] = any(ok);
+        if (tdh[i]){
+            v4 e0 = vmax(vsub(vneg(bb), sq), S(0.f));
+            tt0 = sel(vmin(tt0, e0), tt0, ok);
+            tt1 = sel(vmax(tt1, e1), tt1, ok);
+            tvm = vor(tvm, ok);
+        }
+    }
+    v4 tt = tt0, thit = wasm_i32x4_splat(0);
+    unsigned char LT[MAXP]; int nt=0;
+    if (any(tvm)){
+        for (int i=0;i<ND;i++) if (tdh[i])
+            nt = buildList(ro2, od, tt0, tt1, 0.03f, DPR[i][0], DPR[i][1], LT, nt);
+        if (nt){
+            v4 act = tvm;
+            for (int i=0;i<40;i++){
+                V3 q = v3(vadd(ro2.x, vmul(od.x,tt)),
+                          vadd(ro2.y, vmul(od.y,tt)),
+                          vadd(ro2.z, vmul(od.z,tt)));
+                v4 d = mapLE(q, LT, nt);
+                v4 nh3 = vand(act, vlt(d, vadd(S(0.0025f), vmul(tt, S(0.0012f)))));
+                thit = vor(thit, nh3);
+                act = vandn(act, nh3);
+                tt = sel(vadd(tt, vmul(d, S(0.92f))), tt, act);
+                act = vand(act, vlt(tt, tt1));
+                if (!any(act)) break;
+            }
+        }
+    }
+    // mesh candidates along the same secondary ray, bounded by the SDF
+    // retrace hit (or a generous fallback)
+    v4 tBoundMesh2 = sel(tt, S(30.f), thit);
+    v4 tMesh2; int meshId2[4];
+    meshTraceP(ro2, od, tBoundMesh2, &tMesh2, meshId2);
+    int mesh2Ok[4]; for(int l=0;l<4;l++) mesh2Ok[l]=meshId2[l]>=0?-1:0;
+    v4 useMesh2 = vand(wasm_v128_load(mesh2Ok), mask);
+    v4 useSdfRe = vandn(thit, useMesh2);
+    v4 anyRetraceHit = vor(useSdfRe, useMesh2);
+    v4 ttFinal = sel(tt, tMesh2, useSdfRe);
+
+    if (!any(anyRetraceHit)) return;
+    V3 TP = v3(vadd(ro2.x, vmul(od.x,ttFinal)),
+               vadd(ro2.y, vmul(od.y,ttFinal)),
+               vadd(ro2.z, vmul(od.z,ttFinal)));
+    V3 TN = v3(S(0.f),S(1.f),S(0.f));
+    C3 ta = {S(0.f),S(0.f),S(0.f)};
+    v4 tRefl=S(0.5f), tTran=S(0.65f);
+    v4 tMetM=wasm_i32x4_splat(0), tAcrM=wasm_i32x4_splat(0);
+    if (any(useSdfRe)){
+        const float e3 = 0.004f;
+        v4 h1 = mapLE(v3(vadd(TP.x,S(e3)), vsub(TP.y,S(e3)), vsub(TP.z,S(e3))), LT, nt);
+        v4 h2 = mapLE(v3(vsub(TP.x,S(e3)), vsub(TP.y,S(e3)), vadd(TP.z,S(e3))), LT, nt);
+        v4 h3 = mapLE(v3(vsub(TP.x,S(e3)), vadd(TP.y,S(e3)), vsub(TP.z,S(e3))), LT, nt);
+        v4 h4 = mapLE(v3(vadd(TP.x,S(e3)), vadd(TP.y,S(e3)), vadd(TP.z,S(e3))), LT, nt);
+        V3 TNs = v3norm(v3(
+            vadd(vsub(vsub(h1,h2),h3), h4),
+            vadd(vsub(vsub(h4,h1),h2), h3),
+            vadd(vsub(vsub(h2,h1),h3), h4)));
+        TN = v3(sel(TNs.x,TN.x,useSdfRe), sel(TNs.y,TN.y,useSdfRe), sel(TNs.z,TN.z,useSdfRe));
+        v4 tm0,tm1,tm2;
+        dinoMasks(TP, useSdfRe, LT, nt, &tm0, &tm1, &tm2);
+        C3 ta_ = dinoAlbedo(TP, TN, tm0, tm1, tm2);
+        ta.r = sel(ta_.r, ta.r, useSdfRe);
+        ta.g = sel(ta_.g, ta.g, useSdfRe);
+        ta.b = sel(ta_.b, ta.b, useSdfRe);
+        tRefl = sel(dsel(M_REFL,tm0,tm1), tRefl, useSdfRe);
+        tTran = sel(dsel(M_TRAN,tm0,tm1), tTran, useSdfRe);
+        tMetM = vor(tMetM, vand(modeMask(2,tm0,tm1,tm2), useSdfRe));
+        tAcrM = vor(tAcrM, vand(modeMask(3,tm0,tm1,tm2), useSdfRe));
+    }
+    if (any(useMesh2)){
+        float TPxA[4],TPyA[4],TPzA[4], odxA[4],odyA[4],odzA[4];
+        wasm_v128_store(TPxA,TP.x); wasm_v128_store(TPyA,TP.y); wasm_v128_store(TPzA,TP.z);
+        wasm_v128_store(odxA,od.x); wasm_v128_store(odyA,od.y); wasm_v128_store(odzA,od.z);
+        int useA[4]; wasm_v128_store(useA, useMesh2);
+        float tnxA[4],tnyA[4],tnzA[4], tarA[4],tagA[4],tabA[4];
+        float trA[4],ttrA[4];
+        int tMetA[4], tAcrA[4];
+        for (int l=0;l<4;l++){
+            if (!useA[l]){
+                tnxA[l]=tnyA[l]=tnzA[l]=0.f; tarA[l]=tagA[l]=tabA[l]=0.f;
+                trA[l]=ttrA[l]=0.f; tMetA[l]=tAcrA[l]=0; continue;
+            }
+            float Pl[3]={TPxA[l],TPyA[l],TPzA[l]}, rdl[3]={odxA[l],odyA[l],odzA[l]};
+            float Nl[3], al[3]; int ent, mode; float refl,tran,ior,gloss;
+            meshSurface(meshId2[l], Pl, rdl, Nl, al, &ent, &mode, &refl, &tran, &ior, &gloss);
+            tnxA[l]=Nl[0]; tnyA[l]=Nl[1]; tnzA[l]=Nl[2];
+            tarA[l]=al[0]; tagA[l]=al[1]; tabA[l]=al[2];
+            trA[l]=refl; ttrA[l]=tran;
+            tMetA[l]=(mode==2)?-1:0; tAcrA[l]=(mode==3)?-1:0;
+        }
+        V3 TNmesh = v3(wasm_v128_load(tnxA), wasm_v128_load(tnyA), wasm_v128_load(tnzA));
+        C3 taMesh = { wasm_v128_load(tarA), wasm_v128_load(tagA), wasm_v128_load(tabA) };
+        TN = v3(sel(TNmesh.x,TN.x,useMesh2), sel(TNmesh.y,TN.y,useMesh2), sel(TNmesh.z,TN.z,useMesh2));
+        ta.r = sel(taMesh.r, ta.r, useMesh2);
+        ta.g = sel(taMesh.g, ta.g, useMesh2);
+        ta.b = sel(taMesh.b, ta.b, useMesh2);
+        tRefl = sel(wasm_v128_load(trA),  tRefl, useMesh2);
+        tTran = sel(wasm_v128_load(ttrA), tTran, useMesh2);
+        tMetM = vor(tMetM, vand(wasm_v128_load(tMetA), useMesh2));
+        tAcrM = vor(tAcrM, vand(wasm_v128_load(tAcrA), useMesh2));
+    }
+
+    v4 tdif = vmax(v3dot(TN, Lv), S(0.f));
+    v4 tr_ = vmul(ta.r, vadd(vmul(tdif,S(1.1f)), S(0.34f)));
+    v4 tg_ = vmul(ta.g, vadd(vmul(tdif,S(1.05f)), S(0.38f)));
+    v4 tb_ = vmul(ta.b, vadd(vmul(tdif,S(0.95f)), S(0.46f)));
+    if (any(tMetM)){
+        v4 dn3 = v3dot(TN, od);
+        V3 rr3 = v3(vsub(od.x, vmul(TN.x, vmul(S(2.f),dn3))),
+                    vsub(od.y, vmul(TN.y, vmul(S(2.f),dn3))),
+                    vsub(od.z, vmul(TN.z, vmul(S(2.f),dn3))));
+        C3 e3c = skyCol(rr3, 0);
+        v4 mR = vmin(vadd(vmul(ta.r, S(1.9f)), S(0.08f)), S(1.f));
+        v4 mG = vmin(vadd(vmul(ta.g, S(1.9f)), S(0.08f)), S(1.f));
+        v4 mB = vmin(vadd(vmul(ta.b, S(1.9f)), S(0.08f)), S(1.f));
+        tr_ = sel(mixv(tr_, vmul(e3c.r,mR), tRefl), tr_, tMetM);
+        tg_ = sel(mixv(tg_, vmul(e3c.g,mG), tRefl), tg_, tMetM);
+        tb_ = sel(mixv(tb_, vmul(e3c.b,mB), tRefl), tb_, tMetM);
+    }
+    if (any(tAcrM)){
+        C3 skyBeyond = skyCol(od, 0);
+        tr_ = sel(mixv(tr_, skyBeyond.r, tTran), tr_, tAcrM);
+        tg_ = sel(mixv(tg_, skyBeyond.g, tTran), tg_, tAcrM);
+        tb_ = sel(mixv(tb_, skyBeyond.b, tTran), tb_, tAcrM);
+    }
+    env->r = sel(tr_, env->r, anyRetraceHit);
+    env->g = sel(tg_, env->g, anyRetraceHit);
+    env->b = sel(tb_, env->b, anyRetraceHit);
+}
+
 void sceneRows(float az, float el, float dist, int w, int h, unsigned char *fb, int y0, int y1){
     const float tx=FOCX, ty=0.85f, tz=FOCZ;
     float ce=fcos(el), se=fsin(el);
@@ -337,145 +486,7 @@ void sceneRows(float az, float el, float dist, int w, int h, unsigned char *fb, 
                                     vadd(XP.y, vmul(od.y, S(0.04f))),
                                     vadd(XP.z, vmul(od.z, S(0.04f))));
                         v4 selfM[3] = { m0, m1, m2 };
-                        v4 tt0 = S(1e9f), tt1 = S(-1e9f), tvm = wasm_i32x4_splat(0);
-                        int tdh[ND];
-                        for (int i=0;i<ND;i++){
-                            v4 ocx=vsub(ro2.x,S(DB[i][0])), ocy=vsub(ro2.y,S(DB[i][1])), ocz=vsub(ro2.z,S(DB[i][2]));
-                            v4 bb = vadd(vadd(vmul(ocx,od.x), vmul(ocy,od.y)), vmul(ocz,od.z));
-                            v4 cc = vsub(vadd(vadd(vmul(ocx,ocx),vmul(ocy,ocy)),vmul(ocz,ocz)), S(DB[i][3]*DB[i][3]));
-                            v4 disc = vsub(vmul(bb,bb), cc);
-                            v4 sq = vsqrt(vmax(disc, S(0.f)));
-                            v4 e1 = vsub(sq, bb);
-                            v4 ok = vand(vandn(mAcrSDF, selfM[i]), vand(vgt(disc, S(0.f)), vgt(e1, S(0.f))));
-                            tdh[i] = any(ok);
-                            if (tdh[i]){
-                                v4 e0 = vmax(vsub(vneg(bb), sq), S(0.f));
-                                tt0 = sel(vmin(tt0, e0), tt0, ok);
-                                tt1 = sel(vmax(tt1, e1), tt1, ok);
-                                tvm = vor(tvm, ok);
-                            }
-                        }
-                        v4 tt = tt0, thit = wasm_i32x4_splat(0);
-                        unsigned char LT[MAXP]; int nt=0;
-                        if (any(tvm)){
-                            for (int i=0;i<ND;i++) if (tdh[i])
-                                nt = buildList(ro2, od, tt0, tt1, 0.03f, DPR[i][0], DPR[i][1], LT, nt);
-                            if (nt){
-                                v4 act = tvm;
-                                for (int i=0;i<40;i++){
-                                    V3 q = v3(vadd(ro2.x, vmul(od.x,tt)),
-                                              vadd(ro2.y, vmul(od.y,tt)),
-                                              vadd(ro2.z, vmul(od.z,tt)));
-                                    v4 d = mapLE(q, LT, nt);
-                                    v4 nh3 = vand(act, vlt(d, vadd(S(0.0025f), vmul(tt, S(0.0012f)))));
-                                    thit = vor(thit, nh3);
-                                    act = vandn(act, nh3);
-                                    tt = sel(vadd(tt, vmul(d, S(0.92f))), tt, act);
-                                    act = vand(act, vlt(tt, tt1));
-                                    if (!any(act)) break;
-                                }
-                            }
-                        }
-                        // mesh candidates along the same exit ray, bounded by
-                        // the SDF retrace hit (or a generous fallback)
-                        v4 tBoundMesh2 = sel(tt, S(30.f), thit);
-                        v4 tMesh2; int meshId2[4];
-                        meshTraceP(ro2, od, tBoundMesh2, &tMesh2, meshId2);
-                        int mesh2Ok[4]; for(int l=0;l<4;l++) mesh2Ok[l]=meshId2[l]>=0?-1:0;
-                        v4 useMesh2 = wasm_v128_load(mesh2Ok);
-                        v4 useSdfRe = vandn(thit, useMesh2);
-                        v4 anyRetraceHit = vor(useSdfRe, useMesh2);
-                        v4 ttFinal = sel(tt, tMesh2, useSdfRe);
-
-                        if (any(anyRetraceHit)){
-                            V3 TP = v3(vadd(ro2.x, vmul(od.x,ttFinal)),
-                                       vadd(ro2.y, vmul(od.y,ttFinal)),
-                                       vadd(ro2.z, vmul(od.z,ttFinal)));
-                            V3 TN = v3(S(0.f),S(1.f),S(0.f));
-                            C3 ta = {S(0.f),S(0.f),S(0.f)};
-                            v4 tRefl=S(0.5f), tTran=S(0.65f);
-                            v4 tMetM=wasm_i32x4_splat(0), tAcrM=wasm_i32x4_splat(0);
-                            if (any(useSdfRe)){
-                                const float e3 = 0.004f;
-                                v4 h1 = mapLE(v3(vadd(TP.x,S(e3)), vsub(TP.y,S(e3)), vsub(TP.z,S(e3))), LT, nt);
-                                v4 h2 = mapLE(v3(vsub(TP.x,S(e3)), vsub(TP.y,S(e3)), vadd(TP.z,S(e3))), LT, nt);
-                                v4 h3 = mapLE(v3(vsub(TP.x,S(e3)), vadd(TP.y,S(e3)), vsub(TP.z,S(e3))), LT, nt);
-                                v4 h4 = mapLE(v3(vadd(TP.x,S(e3)), vadd(TP.y,S(e3)), vadd(TP.z,S(e3))), LT, nt);
-                                V3 TNs = v3norm(v3(
-                                    vadd(vsub(vsub(h1,h2),h3), h4),
-                                    vadd(vsub(vsub(h4,h1),h2), h3),
-                                    vadd(vsub(vsub(h2,h1),h3), h4)));
-                                TN = v3(sel(TNs.x,TN.x,useSdfRe), sel(TNs.y,TN.y,useSdfRe), sel(TNs.z,TN.z,useSdfRe));
-                                v4 tm0,tm1,tm2;
-                                dinoMasks(TP, useSdfRe, LT, nt, &tm0, &tm1, &tm2);
-                                C3 ta_ = dinoAlbedo(TP, TN, tm0, tm1, tm2);
-                                ta.r = sel(ta_.r, ta.r, useSdfRe);
-                                ta.g = sel(ta_.g, ta.g, useSdfRe);
-                                ta.b = sel(ta_.b, ta.b, useSdfRe);
-                                tRefl = sel(dsel(M_REFL,tm0,tm1), tRefl, useSdfRe);
-                                tTran = sel(dsel(M_TRAN,tm0,tm1), tTran, useSdfRe);
-                                tMetM = vor(tMetM, vand(modeMask(2,tm0,tm1,tm2), useSdfRe));
-                                tAcrM = vor(tAcrM, vand(modeMask(3,tm0,tm1,tm2), useSdfRe));
-                            }
-                            if (any(useMesh2)){
-                                float TPxA[4],TPyA[4],TPzA[4], odxA[4],odyA[4],odzA[4];
-                                wasm_v128_store(TPxA,TP.x); wasm_v128_store(TPyA,TP.y); wasm_v128_store(TPzA,TP.z);
-                                wasm_v128_store(odxA,od.x); wasm_v128_store(odyA,od.y); wasm_v128_store(odzA,od.z);
-                                float tnxA[4],tnyA[4],tnzA[4], tarA[4],tagA[4],tabA[4];
-                                float trA[4],ttrA[4];
-                                int tMetA[4], tAcrA[4];
-                                for (int l=0;l<4;l++){
-                                    if (meshId2[l] < 0){
-                                        tnxA[l]=tnyA[l]=tnzA[l]=0.f; tarA[l]=tagA[l]=tabA[l]=0.f;
-                                        trA[l]=ttrA[l]=0.f; tMetA[l]=tAcrA[l]=0; continue;
-                                    }
-                                    float Pl[3]={TPxA[l],TPyA[l],TPzA[l]}, rdl[3]={odxA[l],odyA[l],odzA[l]};
-                                    float Nl[3], al[3]; int ent, mode; float refl,tran,ior,gloss;
-                                    meshSurface(meshId2[l], Pl, rdl, Nl, al, &ent, &mode, &refl, &tran, &ior, &gloss);
-                                    tnxA[l]=Nl[0]; tnyA[l]=Nl[1]; tnzA[l]=Nl[2];
-                                    tarA[l]=al[0]; tagA[l]=al[1]; tabA[l]=al[2];
-                                    trA[l]=refl; ttrA[l]=tran;
-                                    tMetA[l]=(mode==2)?-1:0; tAcrA[l]=(mode==3)?-1:0;
-                                }
-                                V3 TNmesh = v3(wasm_v128_load(tnxA), wasm_v128_load(tnyA), wasm_v128_load(tnzA));
-                                C3 taMesh = { wasm_v128_load(tarA), wasm_v128_load(tagA), wasm_v128_load(tabA) };
-                                TN = v3(sel(TNmesh.x,TN.x,useMesh2), sel(TNmesh.y,TN.y,useMesh2), sel(TNmesh.z,TN.z,useMesh2));
-                                ta.r = sel(taMesh.r, ta.r, useMesh2);
-                                ta.g = sel(taMesh.g, ta.g, useMesh2);
-                                ta.b = sel(taMesh.b, ta.b, useMesh2);
-                                tRefl = sel(wasm_v128_load(trA),  tRefl, useMesh2);
-                                tTran = sel(wasm_v128_load(ttrA), tTran, useMesh2);
-                                tMetM = vor(tMetM, vand(wasm_v128_load(tMetA), useMesh2));
-                                tAcrM = vor(tAcrM, vand(wasm_v128_load(tAcrA), useMesh2));
-                            }
-
-                            v4 tdif = vmax(v3dot(TN, Lv), S(0.f));
-                            v4 tr_ = vmul(ta.r, vadd(vmul(tdif,S(1.1f)), S(0.34f)));
-                            v4 tg_ = vmul(ta.g, vadd(vmul(tdif,S(1.05f)), S(0.38f)));
-                            v4 tb_ = vmul(ta.b, vadd(vmul(tdif,S(0.95f)), S(0.46f)));
-                            if (any(tMetM)){
-                                v4 dn3 = v3dot(TN, od);
-                                V3 rr3 = v3(vsub(od.x, vmul(TN.x, vmul(S(2.f),dn3))),
-                                            vsub(od.y, vmul(TN.y, vmul(S(2.f),dn3))),
-                                            vsub(od.z, vmul(TN.z, vmul(S(2.f),dn3))));
-                                C3 e3c = skyCol(rr3, 0);
-                                v4 mR = vmin(vadd(vmul(ta.r, S(1.9f)), S(0.08f)), S(1.f));
-                                v4 mG = vmin(vadd(vmul(ta.g, S(1.9f)), S(0.08f)), S(1.f));
-                                v4 mB = vmin(vadd(vmul(ta.b, S(1.9f)), S(0.08f)), S(1.f));
-                                tr_ = sel(mixv(tr_, vmul(e3c.r,mR), tRefl), tr_, tMetM);
-                                tg_ = sel(mixv(tg_, vmul(e3c.g,mG), tRefl), tg_, tMetM);
-                                tb_ = sel(mixv(tb_, vmul(e3c.b,mB), tRefl), tb_, tMetM);
-                            }
-                            if (any(tAcrM)){
-                                C3 skyBeyond = skyCol(od, 0);
-                                tr_ = sel(mixv(tr_, skyBeyond.r, tTran), tr_, tAcrM);
-                                tg_ = sel(mixv(tg_, skyBeyond.g, tTran), tg_, tAcrM);
-                                tb_ = sel(mixv(tb_, skyBeyond.b, tTran), tb_, tAcrM);
-                            }
-                            tenv.r = sel(tr_, tenv.r, anyRetraceHit);
-                            tenv.g = sel(tg_, tenv.g, anyRetraceHit);
-                            tenv.b = sel(tb_, tenv.b, anyRetraceHit);
-                        }
+                        sceneRetrace(ro2, od, mAcrSDF, selfM, &tenv);
                     }
 
                     v4 att = vdiv(S(1.f), vadd(S(1.f), vmul(s, S(1.6f))));
@@ -527,6 +538,16 @@ void sceneRows(float az, float el, float dist, int w, int h, unsigned char *fb, 
                 cb = sel(mixv(cb, env.b, F), cb, hitFinal);
 
                 if (any(mMet)){
+                    // mirror the combined scene: trace the reflected ray against
+                    // the SDF herd (minus self) and the mesh line-up so mirror
+                    // bodies reflect the surroundings, not just sky/ground
+                    {
+                        V3 ro2 = v3(vadd(P.x, vmul(rr.x, S(0.04f))),
+                                    vadd(P.y, vmul(rr.y, S(0.04f))),
+                                    vadd(P.z, vmul(rr.z, S(0.04f))));
+                        v4 selfM[3] = { m0, m1, m2 };
+                        sceneRetrace(ro2, rr, mMet, selfM, &env);
+                    }
                     v4 Fm = vmul(reflP, vadd(S(0.62f), vmul(S(0.38f), f5)));
                     Fm = vmul(Fm, vadd(S(0.6f), vmul(S(0.4f), sh)));
                     v4 tR = vmin(vadd(vmul(alb.r, S(1.9f)), S(0.08f)), S(1.f));
