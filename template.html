@@ -151,9 +151,9 @@ const STACK_SZ = 65536;               // must match build.sh's -z stack-size and
 // not available (no COOP/COEP headers, e.g. a local file:// open, or an
 // engine without the wasm threads proposal) we fall back to the plain
 // single-threaded build with identical rendering output.
-// m.fn selects which *RowsSteal export to call (renderRowsSteal for the SDF
-// path, renderMeshRowsSteal for the mesh path) — one worker script covers
-// both renderers.
+// m.fn selects which *RowsSteal export to call — sceneRowsSteal drives the
+// combined SDF+mesh renderer that the main loop uses below; one worker
+// script covers it (and the older single-scene exports, if ever needed).
 const WORKER_SRC = `
 let ex;
 onmessage = async (ev) => {
@@ -224,7 +224,9 @@ document.getElementById('badge').textContent =
 
 // rows are independent/deterministic, so this may be called from the main
 // thread and every worker concurrently once frameBegin() has been issued.
-// `fn` is the *RowsSteal export to drive (renderRowsSteal / renderMeshRowsSteal).
+// `fn` is the *RowsSteal export to drive (sceneRowsSteal drives the combined
+// SDF+mesh renderer; renderRowsSteal/renderMeshRowsSteal are kept for the
+// standalone single-scene paths but aren't used by the main render loop).
 function renderRowsMT(fn, h, args){
   e.frameBegin(h);
   const pending = workers.map(wk => new Promise(resolve => {
@@ -234,13 +236,9 @@ function renderRowsMT(fn, h, args){
   e[fn](...args);   // main thread joins the row work-stealing too
   return Promise.all(pending);
 }
-function renderSdfMT(t, az, el, dist, w, h){
-  e.renderPrep(t);
-  return renderRowsMT('renderRowsSteal', h, [az, el, dist, w, h]);
-}
-function renderMeshMT(az, el, dist, w, h){
-  e.meshPrep();
-  return renderRowsMT('renderMeshRowsSteal', h, [az, el, dist, w, h]);
+function renderSceneMT(t, az, el, dist, w, h){
+  e.scenePrep(t);
+  return renderRowsMT('sceneRowsSteal', h, [az, el, dist, w, h]);
 }
 
 // ---- per-dino material panel ----
@@ -333,9 +331,9 @@ if (innerWidth < 640) { $panel.classList.add('min'); $fold.textContent = '+'; }
 // ---- scene: SDF herd vs Quaternius glTF line-up ----
 const MESH_MODELS = ['T-Rex','Velociraptor','Triceratops','Stegosaurus','Parasaurolophus','Apatosaurus'];
 const ACTIONS = ['Idle','Walk','Run','Attack','Jump','Death'];
-const SPACING = 3.4;      // spacing of the line-up along X
+const SPACING = 3.4 * 2/3; // spacing of the line-up along X
 // The models face +Z, so walking/running advances them along +Z on the ground.
-const CHASE_FAR  = 2.2;   // auto-run once this far behind the herd's leader
+const CHASE_FAR  = 2.2 * 10; // auto-run once this far behind the herd's leader
 const CHASE_NEAR = 0.35;  // stop auto-running once caught up within this
 
 let sceneMode = 'sdf';    // 'sdf' | 'mesh'
@@ -346,6 +344,7 @@ let lastFocusAnim = null; // effective clip on the focused dino (for ACTION UI)
 let built = null;         // array of GLB.buildModel results (packed)
 let boneAll = null;       // Float32Array over e.meshBone()
 let meshLoaded = false, loadPromise = null;
+let meshTotalNV = 0, meshTotalNT = 0, meshTotalNJ = 0; // full upload counts, for placing/un-placing the line-up
 
 const meshState = MESH_MODELS.map(() => ({ mode:0, tex:1, refl:0.5, gloss:0.5, tran:0.65, ior:1.49, smooth:false }));
 const meshAction = MESH_MODELS.map(() => 0);   // per-model anim index (set to Walk on load)
@@ -503,7 +502,8 @@ async function loadAll(){
   new Int32Array  (MEM, e.meshIndex(),    idx.length).set(idx);
   new Float32Array(MEM, e.meshColor(),    col.length).set(col);
   new Int32Array  (MEM, e.meshTriModel(), tmdl.length).set(tmdl);
-  e.meshSetCounts(vb, tb, jb);
+  meshTotalNV = vb; meshTotalNT = tb; meshTotalNJ = jb;
+  e.meshSetCounts(vb, tb, jb);   // uploaded; frame() decides per-frame whether it's placed
   boneAll = new Float32Array(MEM, e.meshBone(), jb*12);
   built = models;
   built.forEach((_,i)=>pushMeshMat(i));
@@ -611,14 +611,22 @@ async function frame(now){
   if (resMode !== 'auto') lvl = resMode;
   const [w, h] = LV[lvl];
   const t0 = performance.now();
-  if (sceneMode === 'mesh' && meshLoaded && built) {
+
+  // Mesh line-up animation/travel keeps advancing whenever the models are
+  // loaded, regardless of which scene is currently visible, so it's in a
+  // plausible pose/position when the user switches back to it. Only one
+  // scene is actually drawn per frame (see sceneSetVisibility below).
+  if (meshLoaded && built) {
     // herd leader = frontmost dino (greatest travel)
     let lead = -Infinity;
     for (const m of built) if (meshTravel[m.mi] > lead) lead = meshTravel[m.mi];
     for (const m of built) {
       const i = m.mi, behind = lead - meshTravel[i];
-      // drift too far back -> auto-run until caught up (hysteresis band)
-      if (behind > CHASE_FAR) meshAutoRun[i] = true;
+      // the selected dino is under the user's control and never auto-runs
+      // just because it drifted behind; everyone else auto-runs once far
+      // enough behind the leader, and stops once caught back up (hysteresis)
+      if (i === focusIndex) meshAutoRun[i] = false;
+      else if (behind > CHASE_FAR) meshAutoRun[i] = true;
       else if (behind < CHASE_NEAR) meshAutoRun[i] = false;
       const ai = meshAutoRun[i] ? m.runAnim : meshAction[i];
       const act = actionNameOf(m, ai);
@@ -630,23 +638,37 @@ async function frame(now){
     if (built[focusIndex].curAnim !== lastFocusAnim) {
       lastFocusAnim = built[focusIndex].curAnim; highlightAction();
     }
-    // camera follows the focused dino in x and z
-    focusXCur += (built[focusIndex].slotX - focusXCur) * Math.min(1, dt*6);
-    focusZCur += (meshTravel[focusIndex] - focusZCur) * Math.min(1, dt*6);
-    e.meshSetFocus(focusXCur, focusZCur);
     for (const m of built) {
       const b = GLB.sampleBones(m, m.curAnim, t);
       const zoff = meshTravel[m.mi];
       for (let j = 0; j < m.nj; j++) b[j*12+11] += zoff;   // rigid world-Z shift
       boneAll.set(b, m.jbase*12);
     }
-    if (mtActive) await renderMeshMT(az, el, dist, w, h);
-    else e.renderMesh(az, el, dist, w, h);
-  } else if (mtActive) {
-    await renderSdfMT(t, az, el, dist, w, h);
-  } else {
-    e.render(t, az, el, dist, w, h);
   }
+
+  // camera follow target: mesh focus follows the selected mesh dino in x/z;
+  // SDF focus keeps the herd's fixed reference point (the world scrolls
+  // under the camera on that side instead).
+  const wantX = (sceneMode === 'mesh' && meshLoaded && built) ? built[focusIndex].slotX : 0;
+  const wantZ = (sceneMode === 'mesh' && meshLoaded && built) ? meshTravel[focusIndex] : 0;
+  focusXCur += (wantX - focusXCur) * Math.min(1, dt*6);
+  focusZCur += (wantZ - focusZCur) * Math.min(1, dt*6);
+  e.meshSetFocus(focusXCur, focusZCur);
+
+  // The combined renderer has no idea what "SDF" or "mesh" means — it just
+  // draws whatever is placed in the scene. So the exclusive switch works by
+  // placing/un-placing the whole herd or the whole line-up, not by telling
+  // the renderer which kind to show: dinoSetActive(0) makes animate()
+  // register zero SDF primitives, and meshSetCounts(0,0,...) makes the mesh
+  // line-up's BVH empty. Either way the renderer just finds nothing there.
+  e.dinoSetActive(sceneMode === 'sdf' ? 1 : 0);
+  if (meshLoaded) {
+    const on = sceneMode === 'mesh';
+    e.meshSetCounts(on ? meshTotalNV : 0, on ? meshTotalNT : 0, meshTotalNJ);
+  }
+
+  if (mtActive) await renderSceneMT(t, az, el, dist, w, h);
+  else e.renderScene(t, az, el, dist, w, h);
   const rms = performance.now() - t0;
   ema = ema * 0.85 + rms * 0.15;
   // copy while lvl still matches the (w,h) just rendered — the auto-res

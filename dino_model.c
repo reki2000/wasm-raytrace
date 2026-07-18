@@ -201,8 +201,33 @@ static void trice(const Kin *K){
     qleg(-0.36f, 0.80f+bob, -1.f, 0.26f, ph,   run, 0.23f, 0.150f, 0.082f,  0.6f);
 }
 
+// Whether the herd is placed in the scene this frame (dinoSetActive()).
+// When not placed, animate() registers zero primitives and empty/zero-radius
+// instance bounds instead of skipping its own call — the renderer (render.c
+// / scene.c) never checks this flag or otherwise knows the herd exists; an
+// unplaced herd is just an empty scene as far as it's concerned.
+static int g_placed = 1;
+void dinoSetActive(int active){ g_placed = active; }
+
 void animate(float t){
     NP = 0;
+
+    // sun direction is a fixed constant, not tied to any species, so it's
+    // set unconditionally — the mesh line-up's lighting depends on it too
+    float lx=0.52f, ly=0.64f, lz=0.46f;
+    float il = 1.f / fsqrt(lx*lx+ly*ly+lz*lz);
+    SUNX=lx*il; SUNY=ly*il; SUNZ=lz*il;
+
+    if (!g_placed){
+        for (int i=0;i<ND;i++){
+            DPR[i][0]=0; DPR[i][1]=0;
+            DB[i][0]=0.f; DB[i][1]=0.f; DB[i][2]=0.f; DB[i][3]=0.f;
+            DXW[i]=0.f; DZW[i]=0.f;
+        }
+        OX = 0.f; OZ = 0.f;
+        return;
+    }
+
     // species: lane z, base offset x0, drift D, freq w, phase, skew a
     Kin k0 = kin(t,  0.55f, 0.50f, 0.42f, 0.0f, 0.62f);  // theropod (front lane)
     Kin k1 = kin(t, -0.15f, 0.55f, 0.31f, 2.4f, 0.70f);  // stego (middle)
@@ -224,10 +249,6 @@ void animate(float t){
     DXW[2]=OX; DZW[2]=OZ;
 
     OX = 0.f; OZ = 0.f;
-
-    float lx=0.52f, ly=0.64f, lz=0.46f;
-    float il = 1.f / fsqrt(lx*lx+ly*ly+lz*lz);
-    SUNX=lx*il; SUNY=ly*il; SUNZ=lz*il;
 }
 
 // species albedo (textured)

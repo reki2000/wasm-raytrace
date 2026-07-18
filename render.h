@@ -139,6 +139,15 @@ static inline v4 segDist(v4 px, v4 py, v4 pz, const float *s){
                 vfma(S(s[7]-s[6]), h, S(s[6])));
 }
 
+// ---------- environment + species masks ----------
+// Shared with scene.c (the combined SDF+mesh renderer): sky/ground color,
+// per-instance species masks from a march hit, and the SDF-only soft shadow
+// (generic over any world point, regardless of which renderer produced it).
+C3 skyCol(V3 rd, int clouds);
+C3 groundAlbedo(V3 P);
+void dinoMasks(V3 P, v4 hit, const unsigned char *L, int n, v4 *m0, v4 *m1, v4 *m2);
+v4 softshadow(V3 p, v4 m);
+
 // ---------- frame pipeline ----------
 // Renders rows [y0,y1) of the frame into fb (RGBA8, w*h). Scene must already
 // be built (animate) and the clock advanced (animTick) for this t. Rows are

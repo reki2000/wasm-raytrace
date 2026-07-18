@@ -13,16 +13,34 @@
 |---|---|
 | `render.c` / `render.h` | **レンダリングエンジン** — SDF プリミティブストア(`PR[]`, `cone()` / `coneA()` / `boneCone()`)、距離評価(`mapL()` / `mapLE()`)、カリング(`buildList()`)、環境(`skyCol()` / `groundAlbedo()`)、ソフトシャドウ(`softshadow()`)、マテリアル状態(`M_*` / `setMaterial()`)、フレームパイプライン `renderFrame()` |
 | `anim.c` / `anim.h` | **アニメーションエンジン** — アニメーションクロック(`animTick()`, `GT` / `SCROLL`)、ノースリップ歩行 `gaitFoot()`、群れ運動 `kin()` |
-| `dino_model.c` / `dino_model.h` | **恐竜モデルとアニメーションパラメータ** — 3種のジオメトリビルダー(`theropod()` / `stego()` / `trice()`、脚 `tleg()` / `qleg()`)、群れ配置と太陽設定 `animate()`、種別テクスチャ `dinoAlbedo()` |
-| `mesh.c` / `mesh.h` | **メッシュレンダリングエンジン(第2経路)** — Quaternius glTF 恐竜用。アップロードバッファ(`meshPos()` ほか)、LBS スキニング `skin()`、BVH(`buildBVH()` を16フレーム毎、間は `refitBVH()` で境界のみ更新)、SoA 三角形ストア `packTris()`、4三角同時 SIMD の三角形レイトレ(`traceMesh()` / `occluded()`、Möller–Trumbore + スラブ)、環境のスカラー版(`skyCols()` / `groundCols()`)、フレーム `renderMesh()` |
+| `dino_model.c` / `dino_model.h` | **恐竜モデルとアニメーションパラメータ** — 3種のジオメトリビルダー(`theropod()` / `stego()` / `trice()`、脚 `tleg()` / `qleg()`)、群れ配置と太陽設定 `animate()`、種別テクスチャ `dinoAlbedo()`、群れの配置トグル `dinoSetActive()`(非配置時は `animate()` がプリム0件・境界球半径0で登録し、レンダラ側は何も知らないまま何も見つけない) |
+| `mesh.c` / `mesh.h` | **メッシュレンダリングエンジン(第2経路)** — Quaternius glTF 恐竜用。アップロードバッファ(`meshPos()` ほか)、LBS スキニング `skin()`、BVH(`buildBVH()` を16フレーム毎、間は `refitBVH()` で境界のみ更新)、SoA 三角形ストア `packTris()`、4三角同時 SIMD の三角形レイトレ(`meshTraceScalar()` / `meshOccluded()`、Möller–Trumbore + スラブ)、環境のスカラー版(`skyCols()` / `groundCols()`)、フレーム `renderMesh()`。`meshTraceP()`(4レイパケット BVH トレース、原点も per-lane の `V3` なのでカメラレイにも床ミラーのような per-pixel 原点のレイにも使える)と `meshSurface()`(三角形 ID から法線・頂点色 albedo・マテリアルを引く)は `scene.c` から呼ばれる公開 API |
 | `glb.js` | **GLB ローダ + glTF スケルタルアニメサンプラ**(Node/ブラウザ共用) — `parseGLB()` / `buildModel()`(プリミティブ平坦化・シーンフィット `computeFit()`)/ `sampleBones()`(キーフレーム補間 → ノード階層 → `逆バインド` → フィット合成 → 3x4 行列) |
-| `main.c` | **統合メイン** — SDF 経路 `render`、メッシュ経路 `renderMesh` と `mesh*` アップロードエクスポート、`fb` / `mat`。`render()` は `animTick()` → `animate()` → `renderFrame()`、`renderMesh()` は `skin()` → `buildBVH()` → 走査 |
+| `scene.c` / `scene.h` | **統合シーンレンダラ(第3経路)** — SDF 群れとメッシュ列を**同一フレームに合成**する。`sceneRows()` は `render.c` の `renderRows()` を土台に、各ピクセルパケットで SDF スフィアマーチと `meshTraceP()` の両方を走らせ、より近い方を採用(遠い方は無視)。法線・albedo・マテリアル(`mode`/`refl`/`tran`/`ior`/`gloss`)はどちらの経路が勝っても同じ `v4` 変数に格納され、以降のライティング・フレネル反射・金属ミラーは**発生源を問わず同一コード**で処理される。太陽シャドウは SDF 側の `softshadow()`(発生源を問わない汎用関数)にメッシュ側の `meshOccluded()` 判定を掛け合わせて合成、床ミラーの再マーチも SDF・メッシュ両方を対象にする。アクリル屈折だけは表現が異なるため経路が分かれる(SDF は距離場内部を負距離でマーチして背面を検出、メッシュは面法線でスネル屈折して1回だけシーンをサンプル)。`scenePrep()` は `animTick()`+`animate()`+`meshPrep()` をまとめて呼ぶ。**このモジュール自体は「SDF」「メッシュ」という種別を一切判定しない** — どちらか一方だけを見せたい場合は `scene.c` に手を入れず、上流(`dinoSetActive()` / `meshSetCounts()`)でその群れ・列をシーンに配置するかどうかを切り替える(詳細は `template.html` の項を参照) |
+| `main.c` | **統合メイン** — SDF 単独経路 `render`、メッシュ単独経路 `renderMesh`、統合シーン経路 `renderScene`(既定でテンプレートが呼ぶのはこれ)と `mesh*` アップロードエクスポート、`fb` / `mat`。`render()` は `animTick()` → `animate()` → `renderFrame()`、`renderMesh()` は `skin()` → `buildBVH()` → 走査、`renderScene()` は `scenePrep()` → `sceneRows()` |
 | `vec.h` | 全モジュール共通の SIMD 数学層 — `v4`(f32x4)ラッパ、Relaxed-SIMD FMA(`vfma` / `vfnma`)、SoA ベクトル `V3` / `C3`、libm 代替スカラー数学(`fsin` / `fsqrt` など)、2D 値ノイズ `vnoise()` |
 
-依存方向は `main.c` → 各モジュール。レンダラはシーン固有の表面色だけをフック関数
-`dinoAlbedo()`(`dino_model.h` で宣言)経由で参照します。ホットな評価関数
-(`mapL()` / `mapLE()` / `buildList()` / `smin()` など)は `render.h` に
-`static inline` で置かれ、どの翻訳単位でもインライン展開されます。
+依存方向は `main.c` → 各モジュール、`scene.c` → `render.h` + `mesh.h` + `dino_model.h`。
+レンダラはシーン固有の表面色だけをフック関数 `dinoAlbedo()`(`dino_model.h` で宣言)
+経由で参照します。ホットな評価関数(`mapL()` / `mapLE()` / `buildList()` / `smin()` など)は
+`render.h` に `static inline` で置かれ、どの翻訳単位でもインライン展開されます。
+`skyCol()` / `groundAlbedo()` / `dinoMasks()` / `softshadow()` は(インライン展開は
+狙わず)`render.h` で宣言・`render.c` で定義される通常の外部リンケージ関数で、
+`scene.c` が SDF 側の環境・種別判定・シャドウをそのまま再利用するために公開されています。
+
+SDF とメッシュの恐竜を1画面に共存させたい場合は `render()`/`renderMesh()` ではなく
+`renderScene()`(MT ビルドでは `scenePrep()` + `sceneRowsSteal` の行ワークスチール)を
+使ってください。`render()` / `renderMesh()` とその行並列版(`renderRowsSteal` /
+`renderMeshRowsSteal`)は単独経路のみのテスト・後方互換用に残っています。
+
+`template.html` は常に `renderScene()`(統合レンダラ)を使いますが、実際の見た目は
+SDF 群れかメッシュ列のどちらか一方だけです。これは `scene.c` に「今どちらを見せる
+か」を教える API(例: 種別トグル)を経由するのではなく、**見せたくない方をシーンに
+一切配置しない**ことで実現しています: `dinoSetActive(0)` を呼ぶと `animate()` が
+プリムを1つも登録せず(`DPR` 空区間・`DB` 半径0)、`meshSetCounts(0,0,jb)` を呼ぶと
+メッシュ側の BVH が空になります。`scene.c` 側のコードは一切変更不要 — 「そこに何も
+無い」ので単純に何も見つからないだけです。切り替えロジックは `template.html` の
+メインループ(`sceneMode` の分岐)に閉じています。
 
 ## 設計理念
 
