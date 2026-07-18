@@ -339,8 +339,11 @@ const CHASE_NEAR = 0.35;     // stop auto-running once caught up within this
 
 let sceneMode = 'sdf';    // 'sdf' | 'mesh'
 let focusIndex = 0;       // which model the camera centers on (and controls)
-let focusXCur = 0;        // lerped camera target x
-let focusZCur = 0;        // lerped camera target z (follows the focused dino)
+let focusXCur = 0;        // camera target x (critically damped spring)
+let focusZCur = 0;        // camera target z (follows the focused dino)
+let focusXVel = 0;        // camera target velocity — the spring's inertia state
+let focusZVel = 0;
+const FOLLOW_W = 2.5;     // spring frequency (rad/s): lower = heavier inertia
 let lastFocusAnim = null; // effective clip on the focused dino (for ACTION UI)
 let built = null;         // array of GLB.buildModel results (packed)
 let boneAll = null;       // Float32Array over e.meshBone()
@@ -525,6 +528,7 @@ function selectSdf(i){
   if (sceneMode!=='sdf'){   // avoid a big pan from wherever the camera was
     e.dinoSetActive(1); e.dinoPrep(t);
     focusXCur = e.dinoPosX(i); focusZCur = e.dinoPosZ(i);
+    focusXVel = 0; focusZVel = 0;
   }
   sceneMode='sdf'; sdfFocus=i; highlightScene('sdf'+i);
   $actionwrap.style.display='none'; $meshwrap.style.display='none'; $matwrap.style.display='';
@@ -536,7 +540,8 @@ async function enterMesh(i){
   refreshMeshCard();
   try { await ensureLoaded(); } catch(err){ console.error('model load failed:', err); return; }
   if (!sceneBtns[DINOS.length+i].el.classList.contains('on')) return;   // focus changed while loading
-  if (sceneMode!=='mesh'){ focusXCur = meshTravel[focusIndex]; focusZCur = built[focusIndex].slotZ; }
+  if (sceneMode!=='mesh'){ focusXCur = meshTravel[focusIndex]; focusZCur = built[focusIndex].slotZ;
+                           focusXVel = 0; focusZVel = 0; }
   sceneMode='mesh'; highlightAction(); refreshMeshCard();
 }
 function selectAction(a){
@@ -683,8 +688,16 @@ async function frame(now){
     e.dinoPrep(t);
     wantX = e.dinoPosX(sdfFocus); wantZ = e.dinoPosZ(sdfFocus);
   }
-  focusXCur += (wantX - focusXCur) * Math.min(1, dt*6);
-  focusZCur += (wantZ - focusZCur) * Math.min(1, dt*6);
+  // Critically damped spring follow (exact per-frame solution, stable for any
+  // dt): the velocity state carries the camera at a steady speed through the
+  // target's per-frame jitter, instead of pinning it to the dino's position.
+  {
+    const ex = Math.exp(-FOLLOW_W * dt);
+    const dx = focusXCur - wantX, dz = focusZCur - wantZ;
+    const tx2 = (focusXVel + FOLLOW_W * dx) * dt, tz2 = (focusZVel + FOLLOW_W * dz) * dt;
+    focusXCur = wantX + (dx + tx2) * ex;  focusXVel = (focusXVel - FOLLOW_W * tx2) * ex;
+    focusZCur = wantZ + (dz + tz2) * ex;  focusZVel = (focusZVel - FOLLOW_W * tz2) * ex;
+  }
   e.meshSetFocus(focusXCur, focusZCur);
 
   if (mtActive) await renderSceneMT(t, az, el, dist, w, h);

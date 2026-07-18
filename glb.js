@@ -267,28 +267,46 @@
     const anim = model.anims[ai];
     if (!anim) return null;
     const dur = anim.duration || 1, N = 48;
-    const frames = [];
-    let minY = 1e30;
+    const frames = [], mins = [];
     for (let f = 0; f < N; f++) {
       const vs = skinAll(model, ai, dur * f / N);
       frames.push(vs);
-      for (let v = 0; v < model.nverts; v++) if (vs[v*3+1] < minY) minY = vs[v*3+1];
+      let mn = 1e30;
+      for (let v = 0; v < model.nverts; v++) if (vs[v*3+1] < mn) mn = vs[v*3+1];
+      mins.push(mn);
     }
-    const thr = minY + 0.12;                 // "on the ground" band
-    const coord = new Float64Array(N + 1);
-    for (let f = 0; f <= N; f++) {
-      const vs = frames[f % N];
-      let sum = 0, cnt = 0;
+    // Ground level = median of the per-frame lowest point: robust against a
+    // transient dip (e.g. a tail tip sweeping below the feet for a few
+    // frames), which the global minimum would mistake for the ground.
+    const ground = mins.slice().sort((a, b) => a - b)[N >> 1];
+    const thr = ground + 0.06;               // "on the ground" band (soles only)
+    // Travel advances only while planted geometry slides backward, and by
+    // exactly that slide amount: pair consecutive frames, collect the axis
+    // displacement of the vertices grounded in *both*, and accumulate the
+    // backward component of the *median* displacement. The median keeps a
+    // swing foot skimming low through the band (moving forward, fast) from
+    // diluting the planted majority's backslide; differencing a per-frame
+    // mean of the contact set would additionally count the jump when the set
+    // changes at footfalls, bunching the travel into bursts that desync the
+    // body from the stance feet. Pairs with no shared contact (a run's
+    // aerial phase) coast at the last grounded increment so the body keeps
+    // its takeoff velocity mid-flight.
+    const inc = new Float64Array(N + 1);
+    let coast = 0;
+    for (let f = 1; f <= N; f++) {
+      const va = frames[f - 1], vb = frames[f % N];
+      const ds = [];
       for (let v = 0; v < model.nverts; v++) {
-        if (vs[v*3+1] < thr) { sum += vs[v*3+axis]; cnt++; }
+        if (va[v*3+1] < thr && vb[v*3+1] < thr) ds.push(vb[v*3+axis] - va[v*3+axis]);
       }
-      coord[f] = cnt ? sum / cnt : (f ? coord[f-1] : 0);
+      if (ds.length) {
+        ds.sort((a, b) => a - b);
+        const d = ds[ds.length >> 1];
+        inc[f] = d < 0 ? -d : 0; coast = inc[f];
+      } else inc[f] = coast;
     }
     const cum = new Float64Array(N + 1);
-    for (let f = 1; f <= N; f++) {
-      const d = coord[f] - coord[f-1];
-      cum[f] = cum[f-1] + (d > 0 ? d : 0);
-    }
+    for (let f = 1; f <= N; f++) cum[f] = cum[f-1] + inc[f];
     return { duration: dur, distance: cum[N], samples: cum, count: N };
   }
 
