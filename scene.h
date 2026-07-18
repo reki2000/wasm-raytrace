@@ -21,6 +21,13 @@
 // renderPrep / meshPrep).
 void scenePrep(float t);
 
+// Per-kind visibility filter: lets a caller show only the SDF herd, only
+// the mesh line-up, or both (the default, showSdf=showMesh=1). A hidden
+// kind is skipped at every stage (primary visibility, shadows, floor
+// mirror, acrylic retrace) — it doesn't just fail to draw, it also stops
+// casting shadows or appearing in reflections while hidden.
+void sceneSetVisibility(int showSdf, int showMesh);
+
 // Renders rows [y0,y1) of the combined frame into fb (RGBA8, w*h). Read-only
 // over scene state after scenePrep, so safe to call concurrently for
 // disjoint row ranges from multiple threads (same contract as renderRows /

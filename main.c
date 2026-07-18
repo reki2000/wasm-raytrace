@@ -89,6 +89,11 @@ void e_scenePrep(float t){
     scenePrep(t);
 }
 
+__attribute__((export_name("sceneSetVisibility")))
+void e_sceneSetVisibility(int showSdf, int showMesh){
+    sceneSetVisibility(showSdf, showMesh);
+}
+
 __attribute__((export_name("sceneRows")))
 void e_sceneRows(float az, float el, float dist, int w, int h, int y0, int y1){
     sceneRows(az, el, dist, w, h, FB, y0, y1);

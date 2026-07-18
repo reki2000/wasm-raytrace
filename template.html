@@ -331,9 +331,9 @@ if (innerWidth < 640) { $panel.classList.add('min'); $fold.textContent = '+'; }
 // ---- scene: SDF herd vs Quaternius glTF line-up ----
 const MESH_MODELS = ['T-Rex','Velociraptor','Triceratops','Stegosaurus','Parasaurolophus','Apatosaurus'];
 const ACTIONS = ['Idle','Walk','Run','Attack','Jump','Death'];
-const SPACING = 3.4;      // spacing of the line-up along X
+const SPACING = 3.4 * 2/3; // spacing of the line-up along X
 // The models face +Z, so walking/running advances them along +Z on the ground.
-const CHASE_FAR  = 2.2;   // auto-run once this far behind the herd's leader
+const CHASE_FAR  = 2.2 * 10; // auto-run once this far behind the herd's leader
 const CHASE_NEAR = 0.35;  // stop auto-running once caught up within this
 
 let sceneMode = 'sdf';    // 'sdf' | 'mesh'
@@ -611,16 +611,20 @@ async function frame(now){
   const t0 = performance.now();
 
   // Mesh line-up animation/travel keeps advancing whenever the models are
-  // loaded, regardless of which scene the camera/UI is currently focused
-  // on — the SDF herd and the mesh line-up render together every frame now.
+  // loaded, regardless of which scene is currently visible, so it's in a
+  // plausible pose/position when the user switches back to it. Only one
+  // scene is actually drawn per frame (see sceneSetVisibility below).
   if (meshLoaded && built) {
     // herd leader = frontmost dino (greatest travel)
     let lead = -Infinity;
     for (const m of built) if (meshTravel[m.mi] > lead) lead = meshTravel[m.mi];
     for (const m of built) {
       const i = m.mi, behind = lead - meshTravel[i];
-      // drift too far back -> auto-run until caught up (hysteresis band)
-      if (behind > CHASE_FAR) meshAutoRun[i] = true;
+      // the selected dino is under the user's control and never auto-runs
+      // just because it drifted behind; everyone else auto-runs once far
+      // enough behind the leader, and stops once caught back up (hysteresis)
+      if (i === focusIndex) meshAutoRun[i] = false;
+      else if (behind > CHASE_FAR) meshAutoRun[i] = true;
       else if (behind < CHASE_NEAR) meshAutoRun[i] = false;
       const ai = meshAutoRun[i] ? m.runAnim : meshAction[i];
       const act = actionNameOf(m, ai);
@@ -648,6 +652,10 @@ async function frame(now){
   focusXCur += (wantX - focusXCur) * Math.min(1, dt*6);
   focusZCur += (wantZ - focusZCur) * Math.min(1, dt*6);
   e.meshSetFocus(focusXCur, focusZCur);
+
+  // only the selected scene is actually drawn: SDF-only when an SDF species
+  // is selected, mesh-only when a mesh model is selected.
+  e.sceneSetVisibility(sceneMode === 'sdf' ? 1 : 0, sceneMode === 'mesh' ? 1 : 0);
 
   if (mtActive) await renderSceneMT(t, az, el, dist, w, h);
   else e.renderScene(t, az, el, dist, w, h);
