@@ -351,6 +351,9 @@ const meshState = MESH_MODELS.map(() => ({ mode:0, tex:1, refl:0.5, gloss:0.5, t
 const meshAction = MESH_MODELS.map(() => 0);   // per-model anim index (set to Walk on load)
 const meshTravel = MESH_MODELS.map(() => 0);   // forward ground distance along +X
 const meshAutoRun = MESH_MODELS.map(() => false); // auto-running to rejoin the herd?
+const meshTravelBase = MESH_MODELS.map(() => 0);  // world-X at the current locomotion clip start
+const meshTravelT0 = MESH_MODELS.map(() => 0);    // global time when that clip started
+const meshTravelAnim = MESH_MODELS.map(() => -1); // anim id that owns the current travel phase
 
 const $scenesel = document.getElementById('scenesel');
 const $actionwrap = document.getElementById('actionwrap');
@@ -495,10 +498,12 @@ async function loadAll(){
     }
     vb+=m.nverts; tb+=m.ntris; jb+=m.nj;
     meshAction[i]=animIndexFor(m,'Walk');
-    // ground speed matched to each clip's gait so feet don't slide
-    m.runAnim   = animIndexFor(m,'Run');
-    m.walkSpeed = GLB.gaitSpeed(m, animIndexFor(m,'Walk'), 0);
-    m.runSpeed  = GLB.gaitSpeed(m, m.runAnim, 0);
+    // Contact-derived ground travel curves, evaluated every frame so
+    // world motion follows the planted feet rather than an averaged scroll.
+    m.runAnim = animIndexFor(m,'Run');
+    m.walkAnim = animIndexFor(m,'Walk');
+    m.walkGait = GLB.buildGait(m, m.walkAnim, 0);
+    m.runGait = GLB.buildGait(m, m.runAnim, 0);
   });
   new Float32Array(MEM, e.meshPos(),      pos.length).set(pos);
   new Float32Array(MEM, e.meshNormal(),   nrm.length).set(nrm);
@@ -636,8 +641,13 @@ async function frame(now){
       else if (behind < CHASE_NEAR) meshAutoRun[i] = false;
       const ai = meshAutoRun[i] ? m.runAnim : meshAction[i];
       const act = actionNameOf(m, ai);
-      const spd = act==='Run' ? m.runSpeed : act==='Walk' ? m.walkSpeed : 0;
-      meshTravel[i] += spd * dt;                  // advance along +X on the ground
+      const gait = act==='Run' ? m.runGait : act==='Walk' ? m.walkGait : null;
+      if (meshTravelAnim[i] !== ai) {
+        meshTravelBase[i] = meshTravel[i];
+        meshTravelT0[i] = t;
+        meshTravelAnim[i] = ai;
+      }
+      meshTravel[i] = meshTravelBase[i] + GLB.gaitOffset(gait, t - meshTravelT0[i]);
       m.curAnim = ai;                             // effective clip this frame
       const b = GLB.sampleBones(m, ai, t);
       const xoff = meshTravel[i];

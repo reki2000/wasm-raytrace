@@ -258,16 +258,15 @@
     return out;
   }
 
-  // Forward ground speed (world units / sec) for a locomotion clip, derived so
-  // the planted foot does not slide: skin the mesh across one cycle, track how
-  // fast the low (ground-contact) verts sweep backward along the chosen world
-  // axis, and divide the summed backward travel by the clip duration.
-  // (positive-only sum works for either sweep direction: a periodic signal's
-  // total positive delta equals its total negative delta over a full cycle.)
-  function gaitSpeed(model, ai, axis = 2) {
+  // Build a per-clip ground-contact travel curve. Instead of moving the
+  // model at a constant average speed, sample low (ground-contact) vertices
+  // through a full animation cycle and accumulate their backward sweep along
+  // the chosen world axis. Applying this cumulative curve as rigid world
+  // travel keeps planted feet aligned to the fixed checker ground.
+  function buildGait(model, ai, axis = 2) {
     const anim = model.anims[ai];
-    if (!anim) return 0;
-    const dur = anim.duration || 1, N = 24;
+    if (!anim) return null;
+    const dur = anim.duration || 1, N = 48;
     const frames = [];
     let minY = 1e30;
     for (let f = 0; f < N; f++) {
@@ -276,17 +275,38 @@
       for (let v = 0; v < model.nverts; v++) if (vs[v*3+1] < minY) minY = vs[v*3+1];
     }
     const thr = minY + 0.12;                 // "on the ground" band
-    let back = 0, prevZ = null;
+    const coord = new Float64Array(N + 1);
     for (let f = 0; f <= N; f++) {
       const vs = frames[f % N];
-      let zs = 0, cnt = 0;
-      for (let v = 0; v < model.nverts; v++)
-        if (vs[v*3+1] < thr) { zs += vs[v*3+axis]; cnt++; }
-      const z = cnt ? zs / cnt : prevZ;
-      if (prevZ !== null) { const dz = z - prevZ; if (dz > 0) back += dz; }
-      prevZ = z;
+      let sum = 0, cnt = 0;
+      for (let v = 0; v < model.nverts; v++) {
+        if (vs[v*3+1] < thr) { sum += vs[v*3+axis]; cnt++; }
+      }
+      coord[f] = cnt ? sum / cnt : (f ? coord[f-1] : 0);
     }
-    return back / dur;
+    const cum = new Float64Array(N + 1);
+    for (let f = 1; f <= N; f++) {
+      const d = coord[f] - coord[f-1];
+      cum[f] = cum[f-1] + (d > 0 ? d : 0);
+    }
+    return { duration: dur, distance: cum[N], samples: cum, count: N };
+  }
+
+  function gaitOffset(gait, t) {
+    if (!gait || gait.distance <= 0) return 0;
+    const dur = gait.duration || 1;
+    const cycles = Math.floor(t / dur);
+    let u = (t - cycles * dur) / dur * gait.count;
+    if (u < 0) u += gait.count;
+    const i = Math.min(gait.count - 1, Math.floor(u));
+    const f = u - i;
+    const a = gait.samples[i], b = gait.samples[i + 1];
+    return cycles * gait.distance + lerp(a, b, f);
+  }
+
+  function gaitSpeed(model, ai, axis = 2) {
+    const gait = buildGait(model, ai, axis);
+    return gait ? gait.distance / (gait.duration || 1) : 0;
   }
 
   // skin every vertex of a model at (ai,t) into a fresh Float32Array(nverts*3)
@@ -308,7 +328,7 @@
     return out;
   }
 
-  const API = { parseGLB, buildModel, sampleBones, gaitSpeed };
+  const API = { parseGLB, buildModel, sampleBones, buildGait, gaitOffset, gaitSpeed };
   if (typeof module!=='undefined' && module.exports) module.exports = API;
   else root.GLB = API;
 })(typeof window!=='undefined' ? window : globalThis);
