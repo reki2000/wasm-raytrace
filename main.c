@@ -9,6 +9,7 @@
 #include "dino_model.h"
 #include "mesh.h"
 #include "scene.h"
+#include "eval1ray.h"
 
 #define WMAX 1280
 #define HMAX 720
@@ -63,6 +64,28 @@ void render(float t, float az, float el, float dist, int w, int h){
     animTick(t);      // advance the animation clock (GT, ground scroll)
     animate(t);       // rebuild the herd's primitives for this instant
     renderFrame(az, el, dist, w, h, FB);
+}
+
+// ---- SIMD-strategy evaluation kernels (see eval1ray.h) ----
+__attribute__((export_name("renderLite4")))
+void e_renderLite4(float t, float az, float el, float dist, int w, int h){
+    animTick(t);
+    animate(t);
+    renderLite4(az, el, dist, w, h, FB);
+}
+
+__attribute__((export_name("renderLite1")))
+void e_renderLite1(float t, float az, float el, float dist, int w, int h){
+    animTick(t);
+    animate(t);
+    renderLite1(az, el, dist, w, h, FB);
+}
+
+__attribute__((export_name("renderLite1p")))
+void e_renderLite1p(float t, float az, float el, float dist, int w, int h){
+    animTick(t);
+    animate(t);
+    renderLite1p(az, el, dist, w, h, FB);
 }
 
 // ---- split prep / row-render (multithreaded pipeline) ----

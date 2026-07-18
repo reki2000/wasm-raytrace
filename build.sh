@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 必要: clang + wasm-ld (lld), python3
 set -euo pipefail
-SRC="main.c render.c anim.c dino_model.c mesh.c scene.c"
+SRC="main.c render.c anim.c dino_model.c mesh.c scene.c eval1ray.c"
 MT_MEM_BYTES=8388608   # fixed-size shared memory for the MT build (no growth needed); embed.py needs this to size the JS-side WebAssembly.Memory
 
 # single-threaded build (safe fallback; runs anywhere, no SharedArrayBuffer needed)
