@@ -415,8 +415,16 @@ static void shadeMeshHit(const float*ro,const float*rd,float tH,int tri,int dept
     float f5=1.f-ci; f5=f5*f5; f5=f5*f5*(1.f-ci);
     float rrd[3]={rd[0]-2.f*dnr*nx, rd[1]-2.f*dnr*ny, rd[2]-2.f*dnr*nz};
 
-    if (mode==2){                                   // metal: albedo-tinted env mirror
-        float env[3]; envReflect(P,rrd,env);
+    if (mode==2){                                   // metal: albedo-tinted mirror
+        // reflect the actual scene (line-up + ground + sky), not just the
+        // analytic environment, so mirror bodies show their surroundings
+        float env[3];
+        if (depth<2){
+            float so[3]={P[0]+nx*0.006f+rrd[0]*0.02f,
+                         P[1]+ny*0.006f+rrd[1]*0.02f,
+                         P[2]+nz*0.006f+rrd[2]*0.02f};
+            shade(so,rrd,depth+1,env);
+        } else envReflect(P,rrd,env);
         float Fm=refl*(0.62f+0.38f*f5); Fm*=0.6f+0.4f*sh;
         float tR=fmin2(alr*1.9f+0.08f,1.f), tG=fmin2(alg*1.9f+0.08f,1.f), tB=fmin2(alb*1.9f+0.08f,1.f);
         float dk=1.f-refl*0.72f;
