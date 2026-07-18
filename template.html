@@ -344,6 +344,7 @@ let lastFocusAnim = null; // effective clip on the focused dino (for ACTION UI)
 let built = null;         // array of GLB.buildModel results (packed)
 let boneAll = null;       // Float32Array over e.meshBone()
 let meshLoaded = false, loadPromise = null;
+let meshTotalNV = 0, meshTotalNT = 0, meshTotalNJ = 0; // full upload counts, for placing/un-placing the line-up
 
 const meshState = MESH_MODELS.map(() => ({ mode:0, tex:1, refl:0.5, gloss:0.5, tran:0.65, ior:1.49, smooth:false }));
 const meshAction = MESH_MODELS.map(() => 0);   // per-model anim index (set to Walk on load)
@@ -501,7 +502,8 @@ async function loadAll(){
   new Int32Array  (MEM, e.meshIndex(),    idx.length).set(idx);
   new Float32Array(MEM, e.meshColor(),    col.length).set(col);
   new Int32Array  (MEM, e.meshTriModel(), tmdl.length).set(tmdl);
-  e.meshSetCounts(vb, tb, jb);
+  meshTotalNV = vb; meshTotalNT = tb; meshTotalNJ = jb;
+  e.meshSetCounts(vb, tb, jb);   // uploaded; frame() decides per-frame whether it's placed
   boneAll = new Float32Array(MEM, e.meshBone(), jb*12);
   built = models;
   built.forEach((_,i)=>pushMeshMat(i));
@@ -653,9 +655,17 @@ async function frame(now){
   focusZCur += (wantZ - focusZCur) * Math.min(1, dt*6);
   e.meshSetFocus(focusXCur, focusZCur);
 
-  // only the selected scene is actually drawn: SDF-only when an SDF species
-  // is selected, mesh-only when a mesh model is selected.
-  e.sceneSetVisibility(sceneMode === 'sdf' ? 1 : 0, sceneMode === 'mesh' ? 1 : 0);
+  // The combined renderer has no idea what "SDF" or "mesh" means — it just
+  // draws whatever is placed in the scene. So the exclusive switch works by
+  // placing/un-placing the whole herd or the whole line-up, not by telling
+  // the renderer which kind to show: dinoSetActive(0) makes animate()
+  // register zero SDF primitives, and meshSetCounts(0,0,...) makes the mesh
+  // line-up's BVH empty. Either way the renderer just finds nothing there.
+  e.dinoSetActive(sceneMode === 'sdf' ? 1 : 0);
+  if (meshLoaded) {
+    const on = sceneMode === 'mesh';
+    e.meshSetCounts(on ? meshTotalNV : 0, on ? meshTotalNT : 0, meshTotalNJ);
+  }
 
   if (mtActive) await renderSceneMT(t, az, el, dist, w, h);
   else e.renderScene(t, az, el, dist, w, h);

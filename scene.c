@@ -32,12 +32,6 @@ void scenePrep(float t){
     meshPrep();
 }
 
-static int g_showSdf = 1, g_showMesh = 1;
-void sceneSetVisibility(int showSdf, int showMesh){
-    g_showSdf = showSdf;
-    g_showMesh = showMesh;
-}
-
 void sceneRows(float az, float el, float dist, int w, int h, unsigned char *fb, int y0, int y1){
     const float tx=FOCX, ty=0.85f, tz=FOCZ;
     float ce=fcos(el), se=fsin(el);
@@ -70,29 +64,27 @@ void sceneRows(float az, float el, float dist, int w, int h, unsigned char *fb, 
             v4 down = vlt(rd.y, S(-1e-4f));
             v4 tg = sel(vdiv(S(-cyy), rd.y), S(1e9f), down);
 
-            // ---- SDF instance bound spheres (unchanged from render.c;
-            // skipped entirely when the SDF herd is hidden via
-            // sceneSetVisibility, so it costs nothing and can't leak into
-            // shadows/reflections while hidden) ----
+            // ---- SDF instance bound spheres (unchanged from render.c).
+            // Placement is decided upstream (dino_model.c's animate() only
+            // registers a species' primitives when it's placed in the
+            // scene), so this loop naturally finds nothing for an unplaced
+            // species — no visibility flag needed here. ----
             v4 t0 = S(1e9f), t1 = S(-1e9f), vm = wasm_i32x4_splat(0);
             int dh[ND];
-            for (int i=0;i<ND;i++) dh[i] = 0;
-            if (g_showSdf){
-                for (int i=0;i<ND;i++){
-                    float ocx=cxx-DB[i][0], ocy=cyy-DB[i][1], ocz=czz-DB[i][2];
-                    v4 b = vadd(vadd(vmul(S(ocx),rd.x), vmul(S(ocy),rd.y)), vmul(S(ocz),rd.z));
-                    float cc = ocx*ocx+ocy*ocy+ocz*ocz - DB[i][3]*DB[i][3];
-                    v4 disc = vsub(vmul(b,b), S(cc));
-                    v4 sq = vsqrt(vmax(disc, S(0.f)));
-                    v4 e1 = vsub(sq, b);
-                    v4 ok = vand(vgt(disc, S(0.f)), vgt(e1, S(0.f)));
-                    dh[i] = any(ok);
-                    if (dh[i]){
-                        v4 e0 = vmax(vsub(vneg(b), sq), S(0.01f));
-                        t0 = sel(vmin(t0, e0), t0, ok);
-                        t1 = sel(vmax(t1, e1), t1, ok);
-                        vm = vor(vm, ok);
-                    }
+            for (int i=0;i<ND;i++){
+                float ocx=cxx-DB[i][0], ocy=cyy-DB[i][1], ocz=czz-DB[i][2];
+                v4 b = vadd(vadd(vmul(S(ocx),rd.x), vmul(S(ocy),rd.y)), vmul(S(ocz),rd.z));
+                float cc = ocx*ocx+ocy*ocy+ocz*ocz - DB[i][3]*DB[i][3];
+                v4 disc = vsub(vmul(b,b), S(cc));
+                v4 sq = vsqrt(vmax(disc, S(0.f)));
+                v4 e1 = vsub(sq, b);
+                v4 ok = vand(vgt(disc, S(0.f)), vgt(e1, S(0.f)));
+                dh[i] = any(ok);
+                if (dh[i]){
+                    v4 e0 = vmax(vsub(vneg(b), sq), S(0.01f));
+                    t0 = sel(vmin(t0, e0), t0, ok);
+                    t1 = sel(vmax(t1, e1), t1, ok);
+                    vm = vor(vm, ok);
                 }
             }
             v4 tEnd = vmin(t1, tg);
@@ -122,11 +114,12 @@ void sceneRows(float az, float el, float dist, int w, int h, unsigned char *fb, 
 
             // ---- mesh line-up: 4-ray-packet BVH trace, bounded by the SDF
             // hit (or the ground plane) so it only wins when strictly
-            // nearer than what the SDF march already found. Skipped
-            // entirely when the mesh line-up is hidden. ----
+            // nearer than what the SDF march already found. When the mesh
+            // line-up isn't placed (JS uploaded zero triangles), the BVH is
+            // empty and this naturally finds nothing. ----
             v4 tPreMesh = sel(tD, tg, sdfHit);
-            v4 tMeshHit = tPreMesh; int meshHitId[4] = {-1,-1,-1,-1};
-            if (g_showMesh) meshTraceP(camO, rd, tPreMesh, &tMeshHit, meshHitId);
+            v4 tMeshHit; int meshHitId[4];
+            meshTraceP(camO, rd, tPreMesh, &tMeshHit, meshHitId);
             int meshOkArr[4];
             for (int l=0;l<4;l++) meshOkArr[l] = meshHitId[l]>=0 ? -1 : 0;
             v4 useMesh = wasm_v128_load(meshOkArr);
@@ -228,18 +221,19 @@ void sceneRows(float az, float el, float dist, int w, int h, unsigned char *fb, 
                 V3 sp_ = v3(vadd(P.x, vmul(N.x, S(0.012f))),
                             vadd(P.y, vmul(N.y, S(0.012f))),
                             vadd(P.z, vmul(N.z, S(0.012f))));
-                if (g_showSdf) sh = softshadow(sp_, lit);
+                sh = softshadow(sp_, lit);
                 // mesh occlusion: any mesh triangle between the shading point
                 // and the sun dims it too (same 0.25 residual mesh.c's own
                 // scalar shadow uses) — this is what lets mesh dinosaurs
-                // shadow SDF dinosaurs, the ground, and each other. Skipped
-                // when the mesh line-up is hidden.
+                // shadow SDF dinosaurs, the ground, and each other. When the
+                // mesh line-up isn't placed, meshOccluded() always reports
+                // no occlusion (empty BVH), so this is a no-op.
                 float spxA[4],spyA[4],spzA[4]; int litA[4];
                 wasm_v128_store(spxA, sp_.x); wasm_v128_store(spyA, sp_.y); wasm_v128_store(spzA, sp_.z);
                 wasm_v128_store(litA, lit);
                 float meshShA[4] = {1.f,1.f,1.f,1.f};
                 const float sund[3] = {SUNX, SUNY, SUNZ};
-                if (g_showMesh) for (int l=0;l<4;l++){
+                for (int l=0;l<4;l++){
                     if (!litA[l]) continue;
                     float so[3] = {spxA[l], spyA[l], spzA[l]};
                     if (meshOccluded(so, sund, 20.f)) meshShA[l] = 0.25f;
@@ -383,11 +377,10 @@ void sceneRows(float az, float el, float dist, int w, int h, unsigned char *fb, 
                             }
                         }
                         // mesh candidates along the same exit ray, bounded by
-                        // the SDF retrace hit (or a generous fallback) —
-                        // skipped when the mesh line-up is hidden
+                        // the SDF retrace hit (or a generous fallback)
                         v4 tBoundMesh2 = sel(tt, S(30.f), thit);
-                        v4 tMesh2 = tBoundMesh2; int meshId2[4] = {-1,-1,-1,-1};
-                        if (g_showMesh) meshTraceP(ro2, od, tBoundMesh2, &tMesh2, meshId2);
+                        v4 tMesh2; int meshId2[4];
+                        meshTraceP(ro2, od, tBoundMesh2, &tMesh2, meshId2);
                         int mesh2Ok[4]; for(int l=0;l<4;l++) mesh2Ok[l]=meshId2[l]>=0?-1:0;
                         v4 useMesh2 = wasm_v128_load(mesh2Ok);
                         v4 useSdfRe = vandn(thit, useMesh2);
@@ -553,8 +546,7 @@ void sceneRows(float az, float el, float dist, int w, int h, unsigned char *fb, 
                 V3 rrd = v3(rd.x, vneg(rd.y), rd.z);
                 v4 rt0 = S(1e9f), rt1 = S(-1e9f), rvm = wasm_i32x4_splat(0);
                 int rdh[ND];
-                for (int i=0;i<ND;i++) rdh[i] = 0;
-                if (g_showSdf) for (int i=0;i<ND;i++){
+                for (int i=0;i<ND;i++){
                     v4 ocx=vsub(rro.x,S(DB[i][0])), ocy=vsub(rro.y,S(DB[i][1])), ocz=vsub(rro.z,S(DB[i][2]));
                     v4 b = vadd(vadd(vmul(ocx,rrd.x), vmul(ocy,rrd.y)), vmul(ocz,rrd.z));
                     v4 c = vsub(vadd(vadd(vmul(ocx,ocx),vmul(ocy,ocy)),vmul(ocz,ocz)), S(DB[i][3]*DB[i][3]));
@@ -593,8 +585,8 @@ void sceneRows(float az, float el, float dist, int w, int h, unsigned char *fb, 
                     }
                 }
                 v4 rMeshBound = sel(rt, S(30.f), rSdfHit);
-                v4 rMeshT = rMeshBound; int rMeshId[4] = {-1,-1,-1,-1};
-                if (g_showMesh) meshTraceP(rro, rrd, rMeshBound, &rMeshT, rMeshId);
+                v4 rMeshT; int rMeshId[4];
+                meshTraceP(rro, rrd, rMeshBound, &rMeshT, rMeshId);
                 int rMeshOk[4]; for(int l=0;l<4;l++) rMeshOk[l]=rMeshId[l]>=0?-1:0;
                 v4 rUseMesh = wasm_v128_load(rMeshOk);
                 v4 rUseSDF  = vandn(rSdfHit, rUseMesh);

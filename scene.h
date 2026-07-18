@@ -7,6 +7,16 @@
 // SDF dinosaur and a polygon dinosaur can share the screen, shadow each
 // other, and show up in each other's floor reflection.
 //
+// This renderer has no notion of "SDF mode" or "mesh mode" — it always
+// tries both a sphere march and a BVH trace and keeps whichever hits
+// something. Whether a given herd/line-up actually shows up is entirely a
+// scene-composition question decided upstream: dino_model.c's animate()
+// only registers a species' primitives when it's placed (see
+// dinoSetActive()), and the mesh line-up is only traceable when JS has
+// uploaded a nonzero triangle count (meshSetCounts()). An "empty" kind is
+// naturally invisible, casts no shadows, and reflects nothing, without this
+// module ever checking what kind of geometry it is.
+//
 // Acrylic refraction is the one place the two representations can't share
 // code: the SDF path marches the implicit distance field through the body
 // to find the back face, which has no equivalent on a triangle mesh. Mesh
@@ -20,13 +30,6 @@
 // for this t; single-threaded, main instance only (same contract as
 // renderPrep / meshPrep).
 void scenePrep(float t);
-
-// Per-kind visibility filter: lets a caller show only the SDF herd, only
-// the mesh line-up, or both (the default, showSdf=showMesh=1). A hidden
-// kind is skipped at every stage (primary visibility, shadows, floor
-// mirror, acrylic retrace) — it doesn't just fail to draw, it also stops
-// casting shadows or appearing in reflections while hidden.
-void sceneSetVisibility(int showSdf, int showMesh);
 
 // Renders rows [y0,y1) of the combined frame into fb (RGBA8, w*h). Read-only
 // over scene state after scenePrep, so safe to call concurrently for

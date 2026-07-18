@@ -53,6 +53,11 @@ void mat(int i, int mode, float refl, float tran, float ior, float tex, float gl
     setMaterial(i, mode, refl, tran, ior, tex, gloss);
 }
 
+__attribute__((export_name("dinoSetActive")))
+void e_dinoSetActive(int active){
+    dinoSetActive(active);
+}
+
 __attribute__((export_name("render")))
 void render(float t, float az, float el, float dist, int w, int h){
     animTick(t);      // advance the animation clock (GT, ground scroll)
@@ -87,11 +92,6 @@ void e_renderScene(float t, float az, float el, float dist, int w, int h){
 __attribute__((export_name("scenePrep")))
 void e_scenePrep(float t){
     scenePrep(t);
-}
-
-__attribute__((export_name("sceneSetVisibility")))
-void e_sceneSetVisibility(int showSdf, int showMesh){
-    sceneSetVisibility(showSdf, showMesh);
 }
 
 __attribute__((export_name("sceneRows")))
