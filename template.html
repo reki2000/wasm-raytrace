@@ -331,10 +331,11 @@ if (innerWidth < 640) { $panel.classList.add('min'); $fold.textContent = '+'; }
 // ---- scene: SDF herd vs Quaternius glTF line-up ----
 const MESH_MODELS = ['T-Rex','Velociraptor','Triceratops','Stegosaurus','Parasaurolophus','Apatosaurus'];
 const ACTIONS = ['Idle','Walk','Run','Attack','Jump','Death'];
-const SPACING = 3.4 * 2/3; // spacing of the line-up along X
-// The models face +Z, so walking/running advances them along +Z on the ground.
+const SPACING = 3.4 * 2/3; // lateral spacing of the line-up along Z
+// Mesh GLBs are authored facing +Z; loadAll() rotates them to face +X so
+// locomotion matches the SDF herd's world-space travel direction.
 const CHASE_FAR  = 2.2 * 10; // auto-run once this far behind the herd's leader
-const CHASE_NEAR = 0.35;  // stop auto-running once caught up within this
+const CHASE_NEAR = 0.35;     // stop auto-running once caught up within this
 
 let sceneMode = 'sdf';    // 'sdf' | 'mesh'
 let focusIndex = 0;       // which model the camera centers on (and controls)
@@ -348,8 +349,11 @@ let meshTotalNV = 0, meshTotalNT = 0, meshTotalNJ = 0; // full upload counts, fo
 
 const meshState = MESH_MODELS.map(() => ({ mode:0, tex:1, refl:0.5, gloss:0.5, tran:0.65, ior:1.49, smooth:false }));
 const meshAction = MESH_MODELS.map(() => 0);   // per-model anim index (set to Walk on load)
-const meshTravel = MESH_MODELS.map(() => 0);   // forward ground distance along +Z
+const meshTravel = MESH_MODELS.map(() => 0);   // forward ground distance along +X
 const meshAutoRun = MESH_MODELS.map(() => false); // auto-running to rejoin the herd?
+const meshTravelBase = MESH_MODELS.map(() => 0);  // world-X at the current locomotion clip start
+const meshTravelT0 = MESH_MODELS.map(() => 0);    // global time when that clip started
+const meshTravelAnim = MESH_MODELS.map(() => -1); // anim id that owns the current travel phase
 
 const $scenesel = document.getElementById('scenesel');
 const $actionwrap = document.getElementById('actionwrap');
@@ -476,8 +480,12 @@ async function loadAll(){
   let vb=0, tb=0, jb=0;
   const pos=[], nrm=[], jnt=[], wgt=[], idx=[], col=[], tmdl=[];
   models.forEach((m,i)=>{
-    m.mi=i; m.vbase=vb; m.jbase=jb; m.slotX=(i-(MESH_MODELS.length-1)/2)*SPACING;
-    m.fit[12]+=m.slotX;                          // shift into its slot
+    m.mi=i; m.vbase=vb; m.jbase=jb; m.slotZ=(i-(MESH_MODELS.length-1)/2)*SPACING;
+    // Rotate the authored +Z-facing mesh to face/advance +X, matching SDF.
+    const sc=m.fit[5], cx=-m.fit[12]/sc, cz=-m.fit[14]/sc;
+    m.fit[0]=0; m.fit[2]=-sc;
+    m.fit[8]=sc; m.fit[10]=0;
+    m.fit[12]=-sc*cz; m.fit[14]=sc*cx + m.slotZ;
     for (let v=0;v<m.nverts;v++){
       pos.push(m.pos[v*3],m.pos[v*3+1],m.pos[v*3+2]);
       nrm.push(m.nrm[v*3],m.nrm[v*3+1],m.nrm[v*3+2]);
@@ -490,10 +498,12 @@ async function loadAll(){
     }
     vb+=m.nverts; tb+=m.ntris; jb+=m.nj;
     meshAction[i]=animIndexFor(m,'Walk');
-    // ground speed matched to each clip's gait so feet don't slide
-    m.runAnim   = animIndexFor(m,'Run');
-    m.walkSpeed = GLB.gaitSpeed(m, animIndexFor(m,'Walk'));
-    m.runSpeed  = GLB.gaitSpeed(m, m.runAnim);
+    // Contact-derived ground travel curves, evaluated every frame so
+    // world motion follows the planted feet rather than an averaged scroll.
+    m.runAnim = animIndexFor(m,'Run');
+    m.walkAnim = animIndexFor(m,'Walk');
+    m.walkGait = GLB.buildGait(m, m.walkAnim, 0);
+    m.runGait = GLB.buildGait(m, m.runAnim, 0);
   });
   new Float32Array(MEM, e.meshPos(),      pos.length).set(pos);
   new Float32Array(MEM, e.meshNormal(),   nrm.length).set(nrm);
@@ -526,7 +536,7 @@ async function enterMesh(i){
   refreshMeshCard();
   try { await ensureLoaded(); } catch(err){ console.error('model load failed:', err); return; }
   if (!sceneBtns[DINOS.length+i].el.classList.contains('on')) return;   // focus changed while loading
-  if (sceneMode!=='mesh'){ focusXCur = built[focusIndex].slotX; focusZCur = meshTravel[focusIndex]; }
+  if (sceneMode!=='mesh'){ focusXCur = meshTravel[focusIndex]; focusZCur = built[focusIndex].slotZ; }
   sceneMode='mesh'; highlightAction(); refreshMeshCard();
 }
 function selectAction(a){
@@ -616,37 +626,36 @@ async function frame(now){
   const [w, h] = LV[lvl];
   const t0 = performance.now();
 
-  // Mesh line-up animation/travel keeps advancing whenever the models are
-  // loaded, regardless of which scene is currently visible, so it's in a
-  // plausible pose/position when the user switches back to it. Only one
-  // scene is actually drawn per frame (see sceneSetVisibility below).
+  // Mesh animation/travel keeps advancing in real world coordinates whenever
+  // the models are loaded, matching the SDF herd: dinosaurs move through a
+  // fixed checker ground, and the camera follows the focused model instead of
+  // scrolling the ground texture.
   if (meshLoaded && built) {
-    // herd leader = frontmost dino (greatest travel)
+    // herd leader = frontmost dino (greatest +X travel)
     let lead = -Infinity;
     for (const m of built) if (meshTravel[m.mi] > lead) lead = meshTravel[m.mi];
     for (const m of built) {
       const i = m.mi, behind = lead - meshTravel[i];
-      // the selected dino is under the user's control and never auto-runs
-      // just because it drifted behind; everyone else auto-runs once far
-      // enough behind the leader, and stops once caught back up (hysteresis)
       if (i === focusIndex) meshAutoRun[i] = false;
       else if (behind > CHASE_FAR) meshAutoRun[i] = true;
       else if (behind < CHASE_NEAR) meshAutoRun[i] = false;
       const ai = meshAutoRun[i] ? m.runAnim : meshAction[i];
       const act = actionNameOf(m, ai);
-      const spd = act==='Run' ? m.runSpeed : act==='Walk' ? m.walkSpeed : 0;
-      meshTravel[i] += spd * dt;                  // advance along +Z on the ground
+      const gait = act==='Run' ? m.runGait : act==='Walk' ? m.walkGait : null;
+      if (meshTravelAnim[i] !== ai) {
+        meshTravelBase[i] = meshTravel[i];
+        meshTravelT0[i] = t;
+        meshTravelAnim[i] = ai;
+      }
+      meshTravel[i] = meshTravelBase[i] + GLB.gaitOffset(gait, t - meshTravelT0[i]);
       m.curAnim = ai;                             // effective clip this frame
+      const b = GLB.sampleBones(m, ai, t);
+      const xoff = meshTravel[i];
+      for (let j = 0; j < m.nj; j++) b[j*12+3] += xoff;    // rigid world-X shift
+      boneAll.set(b, m.jbase*12);
     }
-    // surface an auto-run override on the focused dino in the ACTION panel
     if (built[focusIndex].curAnim !== lastFocusAnim) {
       lastFocusAnim = built[focusIndex].curAnim; highlightAction();
-    }
-    for (const m of built) {
-      const b = GLB.sampleBones(m, m.curAnim, t);
-      const zoff = meshTravel[m.mi];
-      for (let j = 0; j < m.nj; j++) b[j*12+11] += zoff;   // rigid world-Z shift
-      boneAll.set(b, m.jbase*12);
     }
   }
 
@@ -662,15 +671,14 @@ async function frame(now){
     e.meshSetCounts(on ? meshTotalNV : 0, on ? meshTotalNT : 0, meshTotalNJ);
   }
 
-  // camera follow target: both scenes really translate their dinosaurs in
-  // world space now (no ground-scroll illusion needed) — the camera just
-  // tracks whichever one is focused. Mesh mode's position comes from the
-  // travel/slot bookkeeping above; SDF mode's comes straight from the
-  // herd's own kin()-driven world position (dinoPrep(t) refreshes it for
+  // camera follow target: both SDF and mesh dinosaurs translate through fixed
+  // world space; the camera tracks the focused model's actual position.
+  // SDF mode's position comes straight from the herd's own kin()-driven world
+  // position (dinoPrep(t) refreshes it for
   // the current t since dinoSetActive() above may have just re-placed it).
   let wantX = 0, wantZ = 0;
   if (sceneMode === 'mesh' && meshLoaded && built) {
-    wantX = built[focusIndex].slotX; wantZ = meshTravel[focusIndex];
+    wantX = meshTravel[focusIndex]; wantZ = built[focusIndex].slotZ;
   } else if (sceneMode === 'sdf') {
     e.dinoPrep(t);
     wantX = e.dinoPosX(sdfFocus); wantZ = e.dinoPosZ(sdfFocus);

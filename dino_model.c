@@ -258,8 +258,8 @@ void animate(float t){
 
 // current world position of herd member i (0=theropod,1=stego,2=trike),
 // valid after the most recent animate(t) call. Lets JS follow the focused
-// SDF dino with the camera the same way it already follows the mesh
-// line-up via meshTravel/slotX.
+// SDF dino with the camera the same way it follows the mesh line-up's
+// world-space meshTravel/slotZ bookkeeping.
 float dinoPosX(int i){ return (i>=0 && i<ND) ? DXW[i] : 0.f; }
 float dinoPosZ(int i){ return (i>=0 && i<ND) ? DZW[i] : 0.f; }
 
