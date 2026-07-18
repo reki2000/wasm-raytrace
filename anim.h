@@ -5,14 +5,6 @@
 
 extern const float VG;   // ground / herd reference speed
 extern float GT;         // global time (chewing, jaw, cloud drift)
-extern float SCROLL;     // ground scroll = VG * t (camera rides with the herd)
-
-// Whether the ground scroll is active: it's the SDF herd's treadmill trick
-// (the herd barely translates, so the ground slides under it along X to
-// sell forward motion) and has nothing to do with the mesh line-up, which
-// really translates along +Z instead. JS toggles this the same way it
-// toggles dinoSetActive() when switching scene modes. Defaults to active (1).
-void groundScrollSetActive(int active);
 
 // herd member kinematics: x(t) = x0 + D*sin(u + a*sin u), u = w t + ph (skewed sine)
 // speed(t) = VG + D*w*cos(u + a*sin u)*(1 + a*cos u)
@@ -24,7 +16,7 @@ Kin kin(float t, float x0, float D, float w, float ph, float a);
 // Returns foot x-offset in [-A,A]; sets lift 0..1 (0 during stance).
 float gaitFoot(float ph, float ds, float A, float *lift);
 
-// advance the animation clock (sets GT and SCROLL)
+// advance the animation clock (sets GT)
 void animTick(float t);
 
 #endif

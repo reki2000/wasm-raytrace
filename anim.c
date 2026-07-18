@@ -5,14 +5,9 @@
 
 const float VG = 0.85f;
 float GT = 0.f;
-float SCROLL = 0.f;
-
-static int g_scrollActive = 1;
-void groundScrollSetActive(int active){ g_scrollActive = active; }
 
 void animTick(float t){
     GT = t;
-    SCROLL = g_scrollActive ? VG * t : 0.f;
 }
 
 Kin kin(float t, float x0, float D, float w, float ph, float a){
