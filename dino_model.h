@@ -15,6 +15,11 @@ void animate(float t);
 // needing to know why. Defaults to active (1).
 void dinoSetActive(int active);
 
+// world position of herd member i (0=theropod,1=stego,2=trike), valid after
+// the most recent animate(t) call
+float dinoPosX(int i);
+float dinoPosZ(int i);
+
 // species albedo (textured), given exclusive instance masks m0/m1/m2
 C3 dinoAlbedo(V3 P, V3 N, v4 m0, v4 m1, v4 m2);
 

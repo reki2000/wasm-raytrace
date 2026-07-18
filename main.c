@@ -58,9 +58,23 @@ void e_dinoSetActive(int active){
     dinoSetActive(active);
 }
 
+// Rebuilds the SDF herd's world positions for time t without a full render —
+// lets JS read dinoPosX/dinoPosZ (for the camera-follow target) before the
+// frame's actual renderScene() call redoes the same work.
+__attribute__((export_name("dinoPrep")))
+void e_dinoPrep(float t){
+    animate(t);
+}
+
+__attribute__((export_name("dinoPosX")))
+float e_dinoPosX(int i){ return dinoPosX(i); }
+
+__attribute__((export_name("dinoPosZ")))
+float e_dinoPosZ(int i){ return dinoPosZ(i); }
+
 __attribute__((export_name("render")))
 void render(float t, float az, float el, float dist, int w, int h){
-    animTick(t);      // advance the animation clock (GT, ground scroll)
+    animTick(t);      // advance the animation clock (GT)
     animate(t);       // rebuild the herd's primitives for this instant
     renderFrame(az, el, dist, w, h, FB);
 }

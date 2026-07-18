@@ -95,11 +95,11 @@ C3 skyCol(V3 rd, int clouds){
 }
 
 C3 groundAlbedo(V3 P){
-    v4 gu = vfloor(vmul(vadd(P.x, S(SCROLL)), S(1.1f)));
+    v4 gu = vfloor(vmul(P.x, S(1.1f)));
     v4 gv = vfloor(vmul(P.z, S(1.1f)));
     v4 gs = vadd(gu, gv);
     v4 ck = vsub(gs, vmul(S(2.f), vfloor(vmul(gs, S(0.5f)))));
-    v4 grime = vmul(vnoise(vmul(vadd(P.x,S(SCROLL)),S(0.7f)), vmul(P.z,S(0.7f))), S(0.10f));
+    v4 grime = vmul(vnoise(vmul(P.x,S(0.7f)), vmul(P.z,S(0.7f))), S(0.10f));
     C3 c;
     c.r = vadd(mixv(S(0.31f), S(0.41f), ck), grime);
     c.g = vadd(mixv(S(0.35f), S(0.45f), ck), grime);

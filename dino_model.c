@@ -233,23 +233,35 @@ void animate(float t){
     Kin k1 = kin(t, -0.15f, 0.55f, 0.31f, 2.4f, 0.70f);  // stego (middle)
     Kin k2 = kin(t, -0.45f, 0.50f, 0.37f, 4.4f, 0.66f);  // trike (back lane)
 
-    OX = k0.x; OZ = -1.40f;
+    // World position advances by the integrated travel distance (k.x + VG*t
+    // = x0 + k.dist), not just the bounded drift k.x alone: the no-slip gait
+    // (gaitFoot()) already plants each foot against exactly this much ground
+    // travel, so moving the body for real by the same amount is what keeps
+    // feet planted — no ground scroll needed to sell the walk.
+    OX = k0.x + VG*t; OZ = -1.40f;
     DPR[0][0]=NP; theropod(&k0); DPR[0][1]=NP;
     DB[0][0]=OX-0.18f; DB[0][1]=0.82f; DB[0][2]=OZ; DB[0][3]=1.66f;
     DXW[0]=OX; DZW[0]=OZ;
 
-    OX = k1.x; OZ = 0.05f;
+    OX = k1.x + VG*t; OZ = 0.05f;
     DPR[1][0]=NP; stego(&k1); DPR[1][1]=NP;
     DB[1][0]=OX-0.40f; DB[1][1]=0.85f; DB[1][2]=OZ; DB[1][3]=1.82f;
     DXW[1]=OX; DZW[1]=OZ;
 
-    OX = k2.x; OZ = 1.45f;
+    OX = k2.x + VG*t; OZ = 1.45f;
     DPR[2][0]=NP; trice(&k2); DPR[2][1]=NP;
     DB[2][0]=OX-0.05f; DB[2][1]=0.85f; DB[2][2]=OZ; DB[2][3]=1.62f;
     DXW[2]=OX; DZW[2]=OZ;
 
     OX = 0.f; OZ = 0.f;
 }
+
+// current world position of herd member i (0=theropod,1=stego,2=trike),
+// valid after the most recent animate(t) call. Lets JS follow the focused
+// SDF dino with the camera the same way it already follows the mesh
+// line-up via meshTravel/slotX.
+float dinoPosX(int i){ return (i>=0 && i<ND) ? DXW[i] : 0.f; }
+float dinoPosZ(int i){ return (i>=0 && i<ND) ? DZW[i] : 0.f; }
 
 // species albedo (textured)
 C3 dinoAlbedo(V3 P, V3 N, v4 m0, v4 m1, v4 m2){

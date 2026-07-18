@@ -512,6 +512,10 @@ async function loadAll(){
 function ensureLoaded(){ return loadPromise || (loadPromise = loadAll()); }
 
 function selectSdf(i){
+  if (sceneMode!=='sdf'){   // avoid a big pan from wherever the camera was
+    e.dinoSetActive(1); e.dinoPrep(t);
+    focusXCur = e.dinoPosX(i); focusZCur = e.dinoPosZ(i);
+  }
   sceneMode='sdf'; sdfFocus=i; highlightScene('sdf'+i);
   $actionwrap.style.display='none'; $meshwrap.style.display='none'; $matwrap.style.display='';
   refreshSdfCard();
@@ -646,15 +650,6 @@ async function frame(now){
     }
   }
 
-  // camera follow target: mesh focus follows the selected mesh dino in x/z;
-  // SDF focus keeps the herd's fixed reference point (the world scrolls
-  // under the camera on that side instead).
-  const wantX = (sceneMode === 'mesh' && meshLoaded && built) ? built[focusIndex].slotX : 0;
-  const wantZ = (sceneMode === 'mesh' && meshLoaded && built) ? meshTravel[focusIndex] : 0;
-  focusXCur += (wantX - focusXCur) * Math.min(1, dt*6);
-  focusZCur += (wantZ - focusZCur) * Math.min(1, dt*6);
-  e.meshSetFocus(focusXCur, focusZCur);
-
   // The combined renderer has no idea what "SDF" or "mesh" means — it just
   // draws whatever is placed in the scene. So the exclusive switch works by
   // placing/un-placing the whole herd or the whole line-up, not by telling
@@ -666,6 +661,23 @@ async function frame(now){
     const on = sceneMode === 'mesh';
     e.meshSetCounts(on ? meshTotalNV : 0, on ? meshTotalNT : 0, meshTotalNJ);
   }
+
+  // camera follow target: both scenes really translate their dinosaurs in
+  // world space now (no ground-scroll illusion needed) — the camera just
+  // tracks whichever one is focused. Mesh mode's position comes from the
+  // travel/slot bookkeeping above; SDF mode's comes straight from the
+  // herd's own kin()-driven world position (dinoPrep(t) refreshes it for
+  // the current t since dinoSetActive() above may have just re-placed it).
+  let wantX = 0, wantZ = 0;
+  if (sceneMode === 'mesh' && meshLoaded && built) {
+    wantX = built[focusIndex].slotX; wantZ = meshTravel[focusIndex];
+  } else if (sceneMode === 'sdf') {
+    e.dinoPrep(t);
+    wantX = e.dinoPosX(sdfFocus); wantZ = e.dinoPosZ(sdfFocus);
+  }
+  focusXCur += (wantX - focusXCur) * Math.min(1, dt*6);
+  focusZCur += (wantZ - focusZCur) * Math.min(1, dt*6);
+  e.meshSetFocus(focusXCur, focusZCur);
 
   if (mtActive) await renderSceneMT(t, az, el, dist, w, h);
   else e.renderScene(t, az, el, dist, w, h);
