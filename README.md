@@ -49,6 +49,11 @@ tracing and animation are implemented.
 `.github/workflows/cloudflare.yml` automatically builds and deploys to
 Cloudflare Pages on every push to `main`.
 
+`.github/workflows/github-pages-redirect.yml` publishes the contents of
+`github-pages-redirect/` to the `gh-pages` branch. GitHub Pages can be configured
+with `gh-pages` as the source branch to serve a lightweight redirect back to the
+canonical Cloudflare Pages URL.
+
 ## Credits / License
 
 - **Code**: MIT License (see `LICENSE`)
