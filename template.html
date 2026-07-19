@@ -652,9 +652,10 @@ async function frame(now){
         meshTravelT0[i] = t;
         meshTravelAnim[i] = ai;
       }
-      meshTravel[i] = meshTravelBase[i] + GLB.gaitOffset(gait, t - meshTravelT0[i]);
+      const clipT = t - meshTravelT0[i];
+      meshTravel[i] = meshTravelBase[i] + GLB.gaitOffset(gait, clipT);
       m.curAnim = ai;                             // effective clip this frame
-      const b = GLB.sampleBones(m, ai, t);
+      const b = GLB.sampleBones(m, ai, clipT);
       const xoff = meshTravel[i];
       for (let j = 0; j < m.nj; j++) b[j*12+3] += xoff;    // rigid world-X shift
       boneAll.set(b, m.jbase*12);
