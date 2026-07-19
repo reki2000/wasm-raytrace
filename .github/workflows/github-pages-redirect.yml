@@ -1,0 +1,31 @@
+# Publish a minimal GitHub Pages site that redirects visitors to Cloudflare Pages.
+name: Deploy GitHub Pages Redirect
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - github-pages-redirect/**
+      - .github/workflows/github-pages-redirect.yml
+  workflow_dispatch:
+
+concurrency:
+  group: github-pages-redirect
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Publish redirect to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./github-pages-redirect
+          force_orphan: true
