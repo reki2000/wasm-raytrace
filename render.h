@@ -12,6 +12,11 @@
 // Constraint: the segment axis must lie within A=1 axes.
 #define MAXP 96
 #define SK 0.062f
+#ifndef CAM_TARGET_Y
+// Orbit-camera target height. Aim near the dinosaurs' heads so tall heads,
+// frills, and horns stay in frame instead of centering on the torso.
+#define CAM_TARGET_Y 1.15f
+#endif
 extern float PR[MAXP][16];
 extern int NP;
 extern float OX, OZ;   // current dino origin offset (applied by cone/coneA)

@@ -583,7 +583,7 @@ void meshPrep(void){
 // writes, read-only scene state from meshPrep), so this may be called
 // concurrently by multiple threads with different [y0,y1) ranges.
 void renderMeshRows(float az, float el, float dist, int w, int h, unsigned char* fb, int y0, int y1){
-    const float tx=FOCX, ty=0.85f, tz=FOCZ;
+    const float tx=FOCX, ty=CAM_TARGET_Y, tz=FOCZ;
     float ce=fcos(el), se=fsin(el);
     float cxx=tx+dist*ce*fsin(az), cyy=ty+dist*se, czz=tz+dist*ce*fcos(az);
     float fx=tx-cxx, fy=ty-cyy, fz=tz-czz;

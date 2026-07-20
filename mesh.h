@@ -13,6 +13,10 @@
 #define MAXT 10000   // max total triangles (pack sum ~9532)
 #define MAXJ 200     // max total joints    (6 x 29 = 174)
 #define NMESH 6      // number of models in the line-up
+#ifndef CAM_TARGET_Y
+// Orbit-camera target height. Aim near dinosaur heads so tall frills/horns stay in frame.
+#define CAM_TARGET_Y 1.15f
+#endif
 
 // upload buffers (JS writes into wasm memory through these pointers)
 float* meshPos(void);      // rest positions        [MAXV*3]
