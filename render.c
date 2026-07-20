@@ -265,7 +265,7 @@ static void herdRetrace(V3 ro2, V3 od, v4 mask, const v4 selfM[3], C3 *env){
 
 // ---------- frame pipeline ----------
 void renderRows(float az, float el, float dist, int w, int h, unsigned char *fb, int y0, int y1){
-    const float tx=0.f, ty=0.85f, tz=0.f;
+    const float tx=CAM_TARGET_X, ty=CAM_TARGET_Y, tz=0.f;
     float ce=fcos(el), se=fsin(el);
     float cxx = tx + dist*ce*fsin(az);
     float cyy = ty + dist*se;

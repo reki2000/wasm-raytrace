@@ -183,7 +183,7 @@ static void sceneRetrace(V3 ro2, V3 od, v4 mask, const v4 selfM[3], C3 *env){
 }
 
 void sceneRows(float az, float el, float dist, int w, int h, unsigned char *fb, int y0, int y1){
-    const float tx=FOCX, ty=0.85f, tz=FOCZ;
+    const float tx=FOCX+CAM_TARGET_X, ty=CAM_TARGET_Y, tz=FOCZ;
     float ce=fcos(el), se=fsin(el);
     float cxx = tx + dist*ce*fsin(az);
     float cyy = ty + dist*se;
